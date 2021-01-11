@@ -66,6 +66,8 @@ class AERGCN(nn.Module):
                     self.lin_syn2 = self.lin_syn1
 
                 self.lin_syn = (self.lin_syn1, self.lin_syn2)
+            else:
+                self.lin_syn = (None, None)
 
         self.attn_sem1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
                                    score_function=opt.score_function, dropout=opt.dropout)
