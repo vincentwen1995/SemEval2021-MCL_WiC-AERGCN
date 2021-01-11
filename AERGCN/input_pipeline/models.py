@@ -44,6 +44,8 @@ class AERGCN(nn.Module):
                 self.pos_tag_embeddings2 = self.pos_tag_embeddings1
 
             self.pos_tag_embeddings = (self.pos_tag_embeddings1, self.pos_tag_embeddings2)
+        else:
+            self.pos_tag_embeddings = (None, None)
 
         if opt.embed_dim != opt.hidden_dim:
             self.lin_sem1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
@@ -198,7 +200,7 @@ class AERGCN(nn.Module):
             else:
                 syntax_text_len = torch.sum(
                     inputs[f'pos_tags{i_lang}'] != 0, dim=-1).to(self.opt.device)
-                syntax_text_out = pos_tag_embeddings(inputs[f'pos_tags{i_lang}']).to(self.opt.device)
+                syntax_text_out = pos_tag_embeddings(inputs[f'pos_tags{i_lang}'].to(self.opt.device))
                 syntax_text_len = torch.sum(
                     inputs[f'pos_tags{i_lang}'] != 0, dim=-1).to(self.opt.device)
 

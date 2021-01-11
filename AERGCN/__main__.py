@@ -37,7 +37,7 @@ def main():
                         help='Specify the language of the first sentence in the sentence pair of the dataset.')
     parser.add_argument('--lang_2', default='en', type=str,
                         help='Specify the language of the second sentence in the sentence pair of the dataset.')
-    parser.add_argument('--include_pos_tags', default=True, type=bool_str,
+    parser.add_argument('--include_pos_tags', default=False, type=bool_str,
                         help='Flag to train the POS tag embeddings for the syntactic branch.')
     parser.add_argument('--regularization', default='basis',
                         choices=[None, 'basis', 'block'], type=str, help='Specify the weight regularization method for R-GCN: None, basis or block.j')
