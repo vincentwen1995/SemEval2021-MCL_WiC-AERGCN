@@ -148,7 +148,7 @@ class Interface:
             self.train_class_weights_repri = torch.FloatTensor(
                 self.train_class_weights).reciprocal().to(self.opt.device)
             train_class_weights_dict = {
-                self.semeval_train.inv_label_ind[i]: self.train_class_weights for i in np.arange(len(self.semeval_train.classes))}
+                self.semeval_train.inv_label_ind[i]: self.train_class_weights[i] for i in np.arange(len(self.semeval_train.classes))}
             print(f'train_class_weights: {train_class_weights_dict}')
             self.criterion = Loss(weight=self.train_class_weights_repri)
             # TODO: Find a better way to assign the eps parameter for label smoothing.
@@ -159,7 +159,7 @@ class Interface:
             self.eval_class_weights_repri = torch.FloatTensor(
                 self.eval_class_weights).reciprocal()
             eval_class_weights_dict = {
-                self.semeval_dev.inv_label_ind[i]: self.eval_class_weights for i in np.arange(len(self.semeval_dev.classes))}
+                self.semeval_dev.inv_label_ind[i]: self.eval_class_weights[i] for i in np.arange(len(self.semeval_dev.classes))}
             print(f'eval_class_weights: {eval_class_weights_dict}')
             self.eval_criterion = Loss(weight=self.eval_class_weights_repri)
             # TODO: Find a better way to assign the eps parameter for label smoothing.
@@ -203,7 +203,7 @@ class Interface:
             self.eval_class_weights_repri = torch.FloatTensor(
                 self.eval_class_weights).reciprocal()
             eval_class_weights_dict = {
-                self.semeval_dev.inv_label_ind[i]: self.eval_class_weights for i in np.arange(len(self.semeval_dev.classes))}
+                self.semeval_dev.inv_label_ind[i]: self.eval_class_weights[i] for i in np.arange(len(self.semeval_dev.classes))}
             print(f'eval_class_weights: {eval_class_weights_dict}')
             self.eval_criterion = Loss(weight=self.eval_class_weights_repri)
             # TODO: Find a better way to assign the eps parameter for label smoothing.
@@ -245,7 +245,7 @@ class Interface:
             self.eval_class_weights_repri = torch.FloatTensor(
                 self.eval_class_weights).reciprocal()
             eval_class_weights_dict = {
-                self.semeval_test.inv_label_ind[i]: self.eval_class_weights for i in np.arange(len(self.semeval_test.classes))}
+                self.semeval_test.inv_label_ind[i]: self.eval_class_weights[i] for i in np.arange(len(self.semeval_test.classes))}
             print(f'eval_class_weights: {eval_class_weights_dict}')
             self.eval_criterion = Loss(weight=self.test_class_weights_repri)
             # TODO: Find a better way to assign the eps parameter for label smoothing.
