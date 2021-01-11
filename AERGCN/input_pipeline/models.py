@@ -35,59 +35,59 @@ class AERGCN(nn.Module):
         self.text_embeddings = AutoModel.from_pretrained(opt.embed_model_name)
 
         if opt.include_pos_tags:
-            pos_tag_embeddings1 = nn.Embedding(
+            self.pos_tag_embeddings1 = nn.Embedding(
                 opt.num_pos_tag1, opt.embed_dim, padding_idx=0)
             if opt.lang_1 != opt.lang_2:
-                pos_tag_embeddings2 = nn.Embedding(
+                self.pos_tag_embeddings2 = nn.Embedding(
                     opt.num_pos_tag2, opt.embed_dim, padding_idx=0)
             else:
-                pos_tag_embeddings2 = pos_tag_embeddings1
+                self.pos_tag_embeddings2 = self.pos_tag_embeddings1
 
-            self.pos_tag_embeddings = (pos_tag_embeddings1, pos_tag_embeddings2)
+            self.pos_tag_embeddings = (self.pos_tag_embeddings1, self.pos_tag_embeddings2)
 
         if opt.embed_dim != opt.hidden_dim:
-            lin_sem1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+            self.lin_sem1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
 
             if not opt.multi_lingual:
-                lin_sem2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+                self.lin_sem2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
             else:
-                lin_sem2 = lin_sem1
+                self.lin_sem2 = self.lin_sem1
 
-            self.lin_sem = (lin_sem1, lin_sem2)
+            self.lin_sem = (self.lin_sem1, self.lin_sem2)
 
             if opt.include_pos_tags:
-                lin_syn1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+                self.lin_syn1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
 
                 if opt.lang_1 != opt.lang_2:
-                    lin_syn2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+                    self.lin_syn2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
                 else:
-                    lin_syn2 = lin_syn1
+                    self.lin_syn2 = self.lin_syn1
 
-                self.lin_syn = (lin_syn1, lin_syn2)
+                self.lin_syn = (self.lin_syn1, self.lin_syn2)
 
-        attn_sem1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
-                              score_function=opt.score_function, dropout=opt.dropout)
+        self.attn_sem1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
+                                   score_function=opt.score_function, dropout=opt.dropout)
 
         if not opt.multi_lingual:
-            attn_sem2 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
-                                  score_function=opt.score_function, dropout=opt.dropout)
+            self.attn_sem2 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
+                                       score_function=opt.score_function, dropout=opt.dropout)
         else:
-            attn_sem2 = attn_sem1
+            self.attn_sem2 = self.attn_sem1
 
-        self.attn_sem = (attn_sem1, attn_sem2)
+        self.attn_sem = (self.attn_sem1, self.attn_sem2)
 
-        attn_syn1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
-                              score_function=opt.score_function, dropout=opt.dropout)
+        self.attn_syn1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
+                                   score_function=opt.score_function, dropout=opt.dropout)
 
         if opt.lang_1 != opt.lang_2:
-            attn_syn2 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
-                                  score_function=opt.score_function, dropout=opt.dropout)
+            self.attn_syn2 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
+                                       score_function=opt.score_function, dropout=opt.dropout)
         else:
-            attn_syn2 = attn_syn1
+            self.attn_syn2 = self.attn_syn1
 
-        self.attn_syn = (attn_syn1, attn_syn2)
+        self.attn_syn = (self.attn_syn1, self.attn_syn2)
 
-        rgcns1 = R_GCN_module(
+        self.rgcns1 = R_GCN_module(
             num_layer=opt.num_rgcn_layer,
             in_features=opt.hidden_dim,
             out_features=opt.hidden_dim,
@@ -97,7 +97,7 @@ class AERGCN(nn.Module):
         )
 
         if opt.lang_1 != opt.lang_2:
-            rgcns2 = R_GCN_module(
+            self.rgcns2 = R_GCN_module(
                 num_layer=opt.num_rgcn_layer,
                 in_features=opt.hidden_dim,
                 out_features=opt.hidden_dim,
@@ -106,9 +106,9 @@ class AERGCN(nn.Module):
                 num_basis=opt.num_basis,
             )
         else:
-            rgcns2 = rgcns1
+            self.rgcns2 = self.rgcns1
 
-        self.rgcns = (rgcns1, rgcns2)
+        self.rgcns = (self.rgcns1, self.rgcns2)
 
         self.dense = nn.Linear(opt.hidden_dim * 4, 2)
 
