@@ -74,6 +74,11 @@ class Interface:
                 rm_tree(self.log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         if opt.fine_tuning:
+            # if any([r'\\' in opt.embed_model_name1, '/' in opt.embed_model_name1, '\\' in opt.embed_model_name1]):
+            #     embed_model = '-'.join(
+            #         Path(opt.embed_model_name1).stem.split('-')[:-4])
+            # else:
+            #     embed_model = opt.embed_model_name1
             if any([r'\\' in opt.embed_model_name, '/' in opt.embed_model_name, '\\' in opt.embed_model_name]):
                 embed_model = '-'.join(
                     Path(opt.embed_model_name).stem.split('-')[:-4])
@@ -85,6 +90,8 @@ class Interface:
         self.best_model_dir = self.log_dir / 'best_state_dict'
         self.best_model_dir.mkdir(parents=True, exist_ok=True)
 
+        # self.batch_embedder = BatchEmbedder(
+        #     model_path=opt.embed_model_name1)
         self.batch_embedder = BatchEmbedder(
             model_path=opt.embed_model_name)
         self.nlp = spacy.load('en_core_web_sm')
@@ -140,7 +147,9 @@ class Interface:
                                         for i in np.arange(len(self.semeval_train.classes))]
             self.train_class_weights_repri = torch.FloatTensor(
                 self.train_class_weights).reciprocal().to(self.opt.device)
-            print(f'train_class_weights: {self.train_class_weights_repri}')
+            train_class_weights_dict = {
+                self.semeval_train.inv_label_ind[i]: self.train_class_weights for i in np.arange(len(self.semeval_train.classes))}
+            print(f'train_class_weights: {train_class_weights_dict}')
             self.criterion = Loss(weight=self.train_class_weights_repri)
             # TODO: Find a better way to assign the eps parameter for label smoothing.
             self.criterion.eps = self.opt.ls_eps
@@ -149,7 +158,9 @@ class Interface:
                                        for i in np.arange(len(self.semeval_dev.classes))]
             self.eval_class_weights_repri = torch.FloatTensor(
                 self.eval_class_weights).reciprocal()
-            print(f'eval_class_weights: {self.eval_class_weights_repri}')
+            eval_class_weights_dict = {
+                self.semeval_dev.inv_label_ind[i]: self.eval_class_weights for i in np.arange(len(self.semeval_dev.classes))}
+            print(f'eval_class_weights: {eval_class_weights_dict}')
             self.eval_criterion = Loss(weight=self.eval_class_weights_repri)
             # TODO: Find a better way to assign the eps parameter for label smoothing.
             self.eval_criterion.eps = self.opt.ls_eps
@@ -191,7 +202,9 @@ class Interface:
                                        for i in np.arange(len(self.semeval_dev.classes))]
             self.eval_class_weights_repri = torch.FloatTensor(
                 self.eval_class_weights).reciprocal()
-            print(f'eval_class_weights: {self.eval_class_weights_repri}')
+            eval_class_weights_dict = {
+                self.semeval_dev.inv_label_ind[i]: self.eval_class_weights for i in np.arange(len(self.semeval_dev.classes))}
+            print(f'eval_class_weights: {eval_class_weights_dict}')
             self.eval_criterion = Loss(weight=self.eval_class_weights_repri)
             # TODO: Find a better way to assign the eps parameter for label smoothing.
             self.eval_criterion.eps = self.opt.ls_eps
@@ -231,7 +244,9 @@ class Interface:
 
             self.eval_class_weights_repri = torch.FloatTensor(
                 self.eval_class_weights).reciprocal()
-            print(f'eval_class_weights: {self.test_class_weights_repri}')
+            eval_class_weights_dict = {
+                self.semeval_test.inv_label_ind[i]: self.eval_class_weights for i in np.arange(len(self.semeval_test.classes))}
+            print(f'eval_class_weights: {eval_class_weights_dict}')
             self.eval_criterion = Loss(weight=self.test_class_weights_repri)
             # TODO: Find a better way to assign the eps parameter for label smoothing.
             self.eval_criterion.eps = self.opt.ls_eps
@@ -245,14 +260,31 @@ class Interface:
         # TODO: Check whether to separate optimizer for fine-tuning (i.e. different learning rate).
         # _params = filter(lambda p: p.requires_grad, chain(self.model.parameters(), self.batch_embedder.parameters()))
         # _params = filter(lambda p: all((p.requires_grad, p not in self.model.text_embeddings.parameters())), self.model.parameters())
-        _params = filter(lambda p: all((p.requires_grad, not in_parameters(
-            p, self.model.text_embeddings.parameters()))), self.model.parameters())
+        # _params = filter(
+        #     lambda p: all(
+        #         (
+        #             p.requires_grad,
+        #             not in_parameters(p, set(self.model.text_embeddings1.parameters()).union(
+        #                 set(self.model.text_embeddings2.parameters()))),
+        #         )), self.model.parameters())
+        _params = filter(
+            lambda p: all(
+                (
+                    p.requires_grad,
+                    not in_parameters(p, self.model.text_embeddings.parameters()),
+                )), self.model.parameters())
         self.optimizer = self.opt.optimizer(
             _params, lr=self.opt.learning_rate, weight_decay=self.opt.l2reg)
 
         if self.opt.fine_tuning:
+            # _ft_params = filter(
+            #     lambda p: p.requires_grad,
+            #     set(self.model.text_embeddings1.parameters()).union(set(self.model.text_embeddings2.parameters()))
+            # )
             _ft_params = filter(
-                lambda p: p.requires_grad, self.model.text_embeddings.parameters())
+                lambda p: p.requires_grad,
+                self.model.text_embeddings.parameters(),
+            )
             self.ft_optimizer = self.opt.optimizer(
                 _ft_params, lr=self.opt.ft_learning_rate, weight_decay=self.opt.ft_l2reg)
         else:
@@ -327,8 +359,13 @@ class Interface:
             # params = [p for p in self.model.parameters() if p not in self.model.text_embeddings.parameters()]
             # params = filter(lambda p: p not in self.model.text_embeddings.parameters(), self.model.parameters())
             # If fine-tuning is turned off, filter out the parameters from the BERT model.
-            params = filter(lambda p: not in_parameters(
-                p, self.model.text_embeddings.parameters()), self.model.parameters())
+            # params = filter(
+            #     lambda p: not in_parameters(p, set(self.model.text_embeddings2.parameters()
+            #                                        ).union(set(self.model.text_embeddings2.parameters()))),
+            #     self.model.parameters())
+            params = filter(
+                lambda p: not in_parameters(p, self.model.text_embeddings.parameters()),
+                self.model.parameters())
         for p in params:
             n_params = torch.prod(torch.tensor(p.shape)).item()
             if p.requires_grad:
@@ -346,6 +383,7 @@ class Interface:
     def _reset_params(self):
         """Initialize the trainable parameters.
         """
+        # for p in filter(lambda p: all((p.requires_grad, not in_parameters(p, set(self.model.text_embeddings1.parameters()).union(set(self.model.text_embeddings2.parameters()))))), self.model.parameters()):
         for p in filter(lambda p: all((p.requires_grad, not in_parameters(p, self.model.text_embeddings.parameters()))), self.model.parameters()):
             if len(p.shape) > 1:
                 self.opt.initializer(p)
@@ -488,7 +526,7 @@ class Interface:
                             ), self.best_model_dir / '{}.pt'.format(self.opt.model_name))
                             print('>>> best model saved.')
 
-                    print(f'step: {self.global_step}, train_loss: {loss.item():.4f}, eval_loss: {eval_loss:.4f}, train_acc: {train_acc:.4f}, eval_acc: {eval_acc:.4f}, train_f1{train_f1:.4f}, eval_f1: {eval_f1:.4f}, evaluation time: {time.time() - eval_start_time:.4f}s, time elapsed: {time.time() - start_time:.4f}s')
+                    print(f'step: {self.global_step}, train_loss: {loss.item():.4f}, eval_loss: {eval_loss:.4f}, train_acc: {train_acc:.4f}, eval_acc: {eval_acc:.4f}, train_f1: {train_f1:.4f}, eval_f1: {eval_f1:.4f}, evaluation time: {time.time() - eval_start_time:.4f}s, time elapsed: {time.time() - start_time:.4f}s')
                     # print('Saving checkpoint: {}s'.format(time.time() - tmp_int_time))
                     # tmp_int_time = time.time()
 
@@ -561,8 +599,10 @@ class Interface:
 
             loss = self.eval_criterion(t_outputs_all, t_targets_all)
 
-        results['eval_acc'] = accuracy_score(t_targets_all.numpy(), t_outputs_all.numpy())
-        results['eval_f1'] = f1_score(t_targets_all.numpy(), t_outputs_all.numpy())
+        t_targets_all = t_targets_all.numpy()
+        t_outputs_all = torch.argmax(t_outputs_all, dim=-1).numpy()
+        results['eval_acc'] = accuracy_score(t_targets_all, t_outputs_all)
+        results['eval_f1'] = f1_score(t_targets_all, t_outputs_all)
         results['eval_loss'] = loss.item()
 
         return results

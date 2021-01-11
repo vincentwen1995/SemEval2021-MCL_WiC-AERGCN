@@ -27,8 +27,12 @@ def main():
                         help='Specify the model to run: AERGCN, AERGCN_no_R or AERGCN_no_MHA, FullSemantic, FullSemantic_no_MHA, AERGCN_no_syn_MHA, AERGCN_no_MHIA.')
     parser.add_argument('--embed_model_name',
                         default='xlm-roberta-base', type=str, help='Specify the path to the saved Huggingface\'s transformer model or the name of the provided ones.')
+    # parser.add_argument('--embed_model_name1',
+    #                     default='xlm-roberta-base', type=str, help='Specify the path to the saved Huggingface\'s transformer model or the name of the provided ones. This is used for the first language of the sentence pairs.')
     parser.add_argument('--multi_lingual', default=True, type=bool_str,
                         help='Specify whether the used semantic embedding model supports multiple languages.')
+    # parser.add_argument('--embed_model_name2',
+    #                     default='xlm-roberta-base', type=str, help='Specify the path to the saved Huggingface\'s transformer model or the name of the provided ones. This is used for the second language of the sentence pairs. If the language model is multi-lingual, only embed_model_name1 needs to be specified.')
     parser.add_argument('--lang_1', default='en', type=str,
                         help='Specify the language of the first sentence in the sentence pair of the dataset.')
     parser.add_argument('--lang_2', default='en', type=str,
@@ -77,6 +81,12 @@ def main():
 
     opt = parser.parse_args()
 
+    if opt.multi_lingual is False:
+        raise NotImplementedError('Mono-lingual language models are currently not supported.')
+
+    if opt.model_name != 'AERGCN':
+        raise NotImplementedError('Variants of the AERGCN model are currently not supported.')
+
     model_classes = {
         'AERGCN': AERGCN,
         'AERGCN_no_R': AERGCN_no_R,
@@ -103,6 +113,8 @@ def main():
     opt.model_class = model_classes[opt.model_name]
     opt.initializer = initializers[opt.initializer]
     opt.optimizer = optimizers[opt.optimizer]
+    opt.num_dependencies1 = opt.num_dependencies
+    opt.num_dependencies2 = opt.num_dependencies
 
     if opt.seed is not None:
         random.seed(opt.seed)

@@ -68,7 +68,7 @@ class MCL_WiC_Dataset(Dataset):
         self.inv_label_ind = {1: 'T', 0: 'F'}
         self.classes = {}
 
-        for label, ind in enumerate(self.label_ind):
+        for label, ind in self.label_ind.items():
             self.classes[ind] = self.df[self.df['tag'] == label].shape[0]
 
         self.df['label'] = self.df['tag'].apply(self.label_ind.get)
@@ -105,7 +105,7 @@ class MCL_WiC_Dataset(Dataset):
 
             self.dependencies[i_lang] = dependencies
 
-            print(f'Most common {k} dependencies: {most_common_k}')
+            print(f'Most common {k} dependencies of {self.split}-{i_lang}-{lang}: {most_common_k}')
 
             with open(self.dataset_resources_dir.parent.parent / f'{lang}' / 'dependency2ind.dict', 'rb') as b_file:
                 dependency2ind = pickle.load(b_file)

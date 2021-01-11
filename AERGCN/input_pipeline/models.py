@@ -23,14 +23,16 @@ class AERGCN(nn.Module):
         super(AERGCN, self).__init__()
         self.opt = opt
 
-        text_embeddings1 = AutoModel.from_pretrained(opt.embed_model_name1)
+        # text_embeddings1 = AutoModel.from_pretrained(opt.embed_model_name1)
 
-        if not opt.multi_lingual:
-            text_embeddings2 = AutoModel.from_pretrained(opt.embed_model_name2)
-        else:
-            text_embeddings2 = text_embeddings1
+        # if not opt.multi_lingual:
+        #     text_embeddings2 = AutoModel.from_pretrained(opt.embed_model_name2)
+        # else:
+        #     text_embeddings2 = text_embeddings1
 
-        self.text_embeddings = (text_embeddings1, text_embeddings2)
+        # self.text_embeddings = (text_embeddings1, text_embeddings2)
+
+        self.text_embeddings = AutoModel.from_pretrained(opt.embed_model_name)
 
         if opt.include_pos_tags:
             pos_tag_embeddings1 = nn.Embedding(
@@ -151,7 +153,7 @@ class AERGCN(nn.Module):
         # for i_lang, lang in enumerate([self.opt.lang_1, self.opt.lang_2], start=1):
         concat_tmp = []
         for i_lang, model_part in enumerate(zip(
-                self.text_embeddings,
+                # self.text_embeddings,
                 self.pos_tag_embeddings,
                 self.lin_sem,
                 self.lin_syn,
@@ -159,7 +161,9 @@ class AERGCN(nn.Module):
                 self.attn_syn,
                 self.rgcns
         ), start=1):
-            text_embeddings, pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, rgcns = model_part
+            # text_embeddings, pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, rgcns = model_part
+            pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, rgcns = model_part
+            text_embeddings = self.text_embeddings
 
             input_ids = inputs[f'input_ids{i_lang}'].to(self.opt.device)
 
