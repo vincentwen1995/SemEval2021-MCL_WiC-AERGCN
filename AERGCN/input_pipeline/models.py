@@ -192,7 +192,7 @@ class AERGCN(nn.Module):
             # tmp_int_time = time.time()
 
             if not self.opt.include_pos_tags:
-                embeddings = text
+                embeddings = text_out
                 alignments = inputs[f'alignment{i_lang}']
 
                 aligned_embeddings = list(map(align_embedding, list(embeddings), alignments))
