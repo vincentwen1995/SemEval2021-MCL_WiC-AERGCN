@@ -1,11 +1,9 @@
 import datetime
 import json
 import math
-import re
 import time
 from collections import defaultdict
 from pathlib import Path
-from subprocess import check_output
 from typing import Any, Generator
 from sklearn.metrics import f1_score, accuracy_score
 
@@ -99,7 +97,8 @@ class Interface:
         if self.opt.label_smoothing:
             Loss = LabelSmoothingCrossEntropyLoss
         else:
-            Loss = nn.CrossEntropyLoss
+            # Loss = nn.CrossEntropyLoss
+            Loss = nn.BCEWithLogitsLoss
 
         self.semeval_train = MCL_WiC_Dataset(
             split='training',
@@ -150,7 +149,9 @@ class Interface:
             train_class_weights_dict = {
                 self.semeval_train.inv_label_ind[i]: self.train_class_weights[i] for i in np.arange(len(self.semeval_train.classes))}
             print(f'train_class_weights: {train_class_weights_dict}')
-            self.criterion = Loss(weight=self.train_class_weights_repri)
+            # self.criterion = Loss(weight=self.train_class_weights_repri)
+            self.criterion = Loss(pos_weight=torch.tensor(
+                self.semeval_train.classes[1] / self.semeval_train.classes[0], dtype=torch.float))
             # TODO: Find a better way to assign the eps parameter for label smoothing.
             self.criterion.eps = self.opt.ls_eps
 
@@ -161,7 +162,9 @@ class Interface:
             eval_class_weights_dict = {
                 self.semeval_dev.inv_label_ind[i]: self.eval_class_weights[i] for i in np.arange(len(self.semeval_dev.classes))}
             print(f'eval_class_weights: {eval_class_weights_dict}')
-            self.eval_criterion = Loss(weight=self.eval_class_weights_repri)
+            # self.eval_criterion = Loss(weight=self.eval_class_weights_repri)
+            self.eval_criterion = Loss(pos_weight=torch.tensor(
+                self.semeval_dev.classes[1] / self.semeval_dev.classes[0], dtype=torch.float))
             # TODO: Find a better way to assign the eps parameter for label smoothing.
             self.eval_criterion.eps = self.opt.ls_eps
 
@@ -205,7 +208,9 @@ class Interface:
             eval_class_weights_dict = {
                 self.semeval_dev.inv_label_ind[i]: self.eval_class_weights[i] for i in np.arange(len(self.semeval_dev.classes))}
             print(f'eval_class_weights: {eval_class_weights_dict}')
-            self.eval_criterion = Loss(weight=self.eval_class_weights_repri)
+            # self.eval_criterion = Loss(weight=self.eval_class_weights_repri)
+            self.eval_criterion = Loss(pos_weight=torch.tensor(
+                self.semeval_dev.classes[1] / self.semeval_dev.classes[0], dtype=torch.float))
             # TODO: Find a better way to assign the eps parameter for label smoothing.
             self.eval_criterion.eps = self.opt.ls_eps
 
@@ -247,7 +252,9 @@ class Interface:
             eval_class_weights_dict = {
                 self.semeval_test.inv_label_ind[i]: self.eval_class_weights[i] for i in np.arange(len(self.semeval_test.classes))}
             print(f'eval_class_weights: {eval_class_weights_dict}')
-            self.eval_criterion = Loss(weight=self.test_class_weights_repri)
+            # self.eval_criterion = Loss(weight=self.test_class_weights_repri)
+            self.eval_criterion = Loss(pos_weight=torch.tensor(
+                self.semeval_dev.classes[1] / self.semeval_dev.classes[0], dtype=torch.float))
             # TODO: Find a better way to assign the eps parameter for label smoothing.
             self.eval_criterion.eps = self.opt.ls_eps
 
@@ -372,7 +379,7 @@ class Interface:
                 n_trainable_params += n_params
             else:
                 n_nontrainable_params += n_params
-        print(f'n_trainable_params: {n_nontrainable_params}, n_nontrainable_params: {n_nontrainable_params}')
+        print(f'n_trainable_params: {n_trainable_params}, n_nontrainable_params: {n_nontrainable_params}')
 
         self.pars_dir = self.log_dir / 'params'
         self.pars_dir.mkdir(exist_ok=True)
@@ -399,7 +406,6 @@ class Interface:
         while epoch < self.opt.num_epoch:
             print('>' * 100)
             print('epoch: ', epoch)
-            n_correct, n_total = 0, 0
             increase_flag = False
 
             # tmp_int_time = time.time()
@@ -431,7 +437,7 @@ class Interface:
                 # print('Network forward: {}s'.format(time.time() - tmp_int_time))
                 # tmp_int_time = time.time()
 
-                loss = self.criterion(outputs, targets)
+                loss = self.criterion(outputs, targets.to(dtype=torch.float).reshape_as(outputs))
 
                 # print('Compute loss: {}s'.format(time.time() - tmp_int_time))
                 # tmp_int_time = time.time()
@@ -459,13 +465,13 @@ class Interface:
 
                 if self.global_step % self.opt.log_step == 0:
                     eval_start_time = time.time()
-                    n_correct += (torch.argmax(outputs, -1)
-                                  == targets).sum().item()
-                    n_total += len(outputs)
 
-                    output_labels = torch.argmax(outputs, -1).numpy()
-                    train_acc = accuracy_score(targets.numpy(), output_labels)
-                    train_f1 = f1_score(targets.numpy(), output_labels)
+                    with torch.no_grad():
+                        targets = targets.numpy()
+                        # output_labels = torch.argmax(outputs, -1).numpy()
+                        output_labels = torch.round(torch.sigmoid(outputs)).numpy()
+                        train_acc = accuracy_score(targets, output_labels)
+                        train_f1 = f1_score(targets, output_labels)
                     # train_acc = n_correct / n_total
 
                     # print('Compute objective accuracy: {}s'.format(time.time() - tmp_int_time))
@@ -508,8 +514,7 @@ class Interface:
                         'accu_eval_f1': self.accu_eval_f1,
                     }
                     latest_ckpt = self.ckpt_dir / \
-                        '{}_{}.pt'.format(
-                            self.opt.model_name, self.global_step)
+                        f'{self.opt.model_name}_{self.global_step}.pt'
                     if self.opt.save:
                         torch.save(ckpt_dict, latest_ckpt)
 
@@ -523,7 +528,7 @@ class Interface:
                         self.max_eval_f1 = eval_f1
                         if self.opt.save:
                             torch.save(self.model.state_dict(
-                            ), self.best_model_dir / '{}.pt'.format(self.opt.model_name))
+                            ), self.best_model_dir / f'{self.opt.model_name}.pt')
                             print('>>> best model saved.')
 
                     print(f'step: {self.global_step}, train_loss: {loss.item():.4f}, eval_loss: {eval_loss:.4f}, train_acc: {train_acc:.4f}, eval_acc: {eval_acc:.4f}, train_f1: {train_f1:.4f}, eval_f1: {eval_f1:.4f}, evaluation time: {time.time() - eval_start_time:.4f}s, time elapsed: {time.time() - start_time:.4f}s')
@@ -565,10 +570,8 @@ class Interface:
             'accu_eval_f1': self.accu_eval_f1,
         }
         if self.opt.save:
-            torch.save(ckpt_dict, self.ckpt_dir / '{}_{}.pt'.format(
-                self.opt.model_name, self.global_step))
-        print('Finished training with {} steps in {:.4f}s.'.format(
-            self.global_step, time.time() - start_time))
+            torch.save(ckpt_dict, self.ckpt_dir / f'{self.opt.model_name}_{self.global_step}.pt')
+        print(f'Finished training with {self.global_step} steps in {time.time() - start_time:.4f}s.')
 
     def _evaluate(self) -> dict:
         """Evaluate the model and return the result dictionary.
@@ -578,7 +581,8 @@ class Interface:
         """
         self.model.eval()
 
-        t_targets_all, t_outputs_all = None, None
+        # t_targets_all, t_outputs_all = None, None
+        t_targets_all, t_outputs_all = [], []
         results = defaultdict(list)
         with torch.no_grad():
             for t_batch, t_sample_batched in enumerate(self.dev_data_loader):
@@ -587,20 +591,24 @@ class Interface:
                 t_outputs = self.model(t_inputs, fine_tuning=False).cpu()
 
                 torch.cuda.empty_cache()
+                t_targets_all.append(t_targets)
+                t_outputs_all.append(t_outputs)
 
-                if t_targets_all is None:
-                    t_targets_all = t_targets
-                    t_outputs_all = t_outputs
-                else:
-                    t_targets_all = torch.cat(
-                        (t_targets_all, t_targets), dim=0)
-                    t_outputs_all = torch.cat(
-                        (t_outputs_all, t_outputs), dim=0)
-
-            loss = self.eval_criterion(t_outputs_all, t_targets_all)
+                # if t_targets_all is None:
+                #     t_targets_all = t_targets
+                #     t_outputs_all = t_outputs
+                # else:
+                #     t_targets_all = torch.cat(
+                #         (t_targets_all, t_targets), dim=0)
+                #     t_outputs_all = torch.cat(
+                #         (t_outputs_all, t_outputs), dim=0)
+            t_outputs_all = torch.cat(t_outputs_all, dim=0)
+            t_targets_all = torch.cat(t_targets_all, dim=0)
+            loss = self.eval_criterion(t_outputs_all, t_targets_all.to(dtype=torch.float).reshape_as(t_outputs_all))
 
         t_targets_all = t_targets_all.numpy()
-        t_outputs_all = torch.argmax(t_outputs_all, dim=-1).numpy()
+        # t_outputs_all = torch.argmax(t_outputs_all, dim=-1).numpy()
+        t_outputs_all = torch.round(torch.sigmoid(t_outputs_all)).numpy()
         results['eval_acc'] = accuracy_score(t_targets_all, t_outputs_all)
         results['eval_f1'] = f1_score(t_targets_all, t_outputs_all)
         results['eval_loss'] = loss.item()
@@ -610,8 +618,7 @@ class Interface:
     def run(self):
         """Run the program as defined by the CLI arugments.
         """
-        self.writer = SummaryWriter(log_dir=self.log_dir, filename_suffix='{}'.format(
-            self.opt.model_name))
+        self.writer = SummaryWriter(log_dir=self.log_dir, filename_suffix=f'{self.opt.model_name}')
         # TODO: Maybe include model graph in the loggers.
         # for example_input in self.train_data_loader:
         #     break
@@ -636,8 +643,6 @@ class Interface:
                 print('#' * 100)
                 print('Evaluate training results for the current parameter settings.')
                 print('Evaluate on the final trained model:')
-
-                print('Evaluate the final result.')
                 result_dict = self._evaluate()
                 self.accu_eval_acc.append(result_dict['eval_acc'])
                 self.accu_eval_f1.append(result_dict['eval_f1'])
@@ -648,7 +653,7 @@ class Interface:
             if self.opt.save:
                 print('Evaluate on the best model:')
                 self.model.load_state_dict(torch.load(
-                    self.best_model_dir / '{}.pt'.format(self.opt.model_name), map_location=self.opt.device))
+                    self.best_model_dir / f'{self.opt.model_name}.pt', map_location=self.opt.device))
                 result_dict = self._evaluate()
                 best_accu_eval_acc = [result_dict['eval_acc']]
                 best_accu_eval_f1 = [result_dict['eval_f1']]
@@ -669,6 +674,7 @@ class Interface:
 
             stacked_stats = np.stack(stacked_lists, axis=0)
             summary_dict = compute_summary(summary_keys, stacked_stats)
+            print(f'Performance Summary:\n{summary_dict}')
 
             self.writer.add_hparams(self.arg_dict, summary_dict)
             if wandb:
@@ -690,7 +696,7 @@ class Interface:
             print(f'Evaluate on the loaded model ({self.opt.model_dir}):')
             result_dict = self._evaluate()
 
-            with open(self.log_dir / '{}.json'.format(self.opt.mode), 'w', encoding='utf-8') as json_file:
+            with open(self.log_dir / f'{self.opt.mode}.json', 'w', encoding='utf-8') as json_file:
                 json.dump(result_dict, json_file, indent=2)
 
             self.writer.add_hparams(self.arg_dict, result_dict)

@@ -114,7 +114,8 @@ class AERGCN(nn.Module):
 
         self.rgcns = (self.rgcns1, self.rgcns2)
 
-        self.dense = nn.Linear(opt.hidden_dim * 4, 2)
+        # self.dense = nn.Linear(opt.hidden_dim * 4, 2)
+        self.dense = nn.Linear(opt.hidden_dim * 4, 1)
 
     def forward(self, inputs: dict, fine_tuning: bool = False) -> torch.FloatTensor:
         """Model pipeline for AERGCN.
