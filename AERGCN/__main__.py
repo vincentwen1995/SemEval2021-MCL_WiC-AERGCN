@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from AERGCN.cli import Interface
-from AERGCN.input_pipeline.models import AERGCN, AERGCN_no_R, AERGCN_no_MHA, FullSemantic, FullSemantic_no_MHA, \
+from AERGCN.input_pipeline.models import AEGCN_lite, AERGCN, AEGCN, AERGCN_no_R, AERGCN_no_MHA, FullSemantic, FullSemantic_no_MHA, \
     AERGCN_no_syn_MHA, AERGCN_no_MHIA
 
 
@@ -84,17 +84,13 @@ def main():
     if opt.multi_lingual is False:
         raise NotImplementedError('Mono-lingual language models are currently not supported.')
 
-    if opt.model_name != 'AERGCN':
-        raise NotImplementedError('Variants of the AERGCN model are currently not supported.')
+    if opt.model_name != 'AERGCN' and opt.model_name != 'AEGCN' and opt.model_name != 'AEGCN_lite':
+        raise NotImplementedError('Other variants of the AERGCN model are currently not supported.')
 
     model_classes = {
         'AERGCN': AERGCN,
-        'AERGCN_no_R': AERGCN_no_R,
-        'AERGCN_no_MHA': AERGCN_no_MHA,
-        'AERGCN_no_syn_MHA': AERGCN_no_syn_MHA,
-        'AERGCN_no_MHIA': AERGCN_no_MHIA,
-        'FullSemantic': FullSemantic,
-        'FullSemantic_no_MHA': FullSemantic_no_MHA,
+        'AEGCN': AEGCN,
+        'AEGCN_lite': AEGCN_lite,
     }
     initializers = {
         'xavier_uniform_': torch.nn.init.xavier_uniform_,

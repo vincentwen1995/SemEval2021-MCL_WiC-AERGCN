@@ -114,8 +114,9 @@ class AERGCN(nn.Module):
 
         self.rgcns = (self.rgcns1, self.rgcns2)
 
-        # self.dense = nn.Linear(opt.hidden_dim * 4, 2)
+        self.dropout = nn.Dropout(p=self.opt.dropout)
         self.dense = nn.Linear(opt.hidden_dim * 4, 1)
+        # self.dense = nn.Linear(opt.hidden_dim * 4, 2)
 
     def forward(self, inputs: dict, fine_tuning: bool = False) -> torch.FloatTensor:
         """Model pipeline for AERGCN.
@@ -230,7 +231,412 @@ class AERGCN(nn.Module):
             concat_tmp.extend([sem_attn_mean, syn_attn_mean])
 
         concat_embeddings = torch.cat(concat_tmp, dim=-1)
-        output = self.dense(concat_embeddings)
+        output = self.dense(self.dropout(concat_embeddings))
+
+        # print('Final classification: {}s'.format(time.time() - tmp_int_time))
+        # tmp_int_time = time.time()
+
+        return output
+
+
+class AEGCN(nn.Module):
+    """Class for the AERGCN model.
+    """
+
+    def __init__(self, opt: Any):
+        """Instantiate the AERGCN model with the parsed arguments.
+
+        Args:
+            opt (Any): Parsed command-line arguments.
+        """
+        super(AEGCN, self).__init__()
+        self.opt = opt
+
+        self.text_embeddings = AutoModel.from_pretrained(opt.embed_model_name)
+
+        if opt.include_pos_tags:
+            self.pos_tag_embeddings1 = nn.Embedding(
+                opt.num_pos_tag1, opt.embed_dim, padding_idx=0)
+            if opt.lang_1 != opt.lang_2:
+                self.pos_tag_embeddings2 = nn.Embedding(
+                    opt.num_pos_tag2, opt.embed_dim, padding_idx=0)
+            else:
+                self.pos_tag_embeddings2 = self.pos_tag_embeddings1
+
+            self.pos_tag_embeddings = (self.pos_tag_embeddings1, self.pos_tag_embeddings2)
+        else:
+            self.pos_tag_embeddings = (None, None)
+
+        if opt.embed_dim != opt.hidden_dim:
+            self.lin_sem1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+
+            if not opt.multi_lingual:
+                self.lin_sem2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+            else:
+                self.lin_sem2 = self.lin_sem1
+
+            self.lin_sem = (self.lin_sem1, self.lin_sem2)
+
+            if opt.include_pos_tags:
+                self.lin_syn1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+
+                if opt.lang_1 != opt.lang_2:
+                    self.lin_syn2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+                else:
+                    self.lin_syn2 = self.lin_syn1
+
+                self.lin_syn = (self.lin_syn1, self.lin_syn2)
+            else:
+                self.lin_syn = (None, None)
+
+        self.attn_sem1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
+                                   score_function=opt.score_function, dropout=opt.dropout)
+
+        if not opt.multi_lingual:
+            self.attn_sem2 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
+                                       score_function=opt.score_function, dropout=opt.dropout)
+        else:
+            self.attn_sem2 = self.attn_sem1
+
+        self.attn_sem = (self.attn_sem1, self.attn_sem2)
+
+        self.attn_syn1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
+                                   score_function=opt.score_function, dropout=opt.dropout)
+
+        if opt.lang_1 != opt.lang_2:
+            self.attn_syn2 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
+                                       score_function=opt.score_function, dropout=opt.dropout)
+        else:
+            self.attn_syn2 = self.attn_syn1
+
+        self.attn_syn = (self.attn_syn1, self.attn_syn2)
+
+        self.gcns1 = GCN_module(
+            num_layer=opt.num_rgcn_layer,
+            in_features=opt.hidden_dim,
+            out_features=opt.hidden_dim,
+        )
+
+        if opt.lang_1 != opt.lang_2:
+            self.gcns2 = GCN_module(
+                num_layer=opt.num_rgcn_layer,
+                in_features=opt.hidden_dim,
+                out_features=opt.hidden_dim,
+            )
+        else:
+            self.gcns2 = self.gcns1
+
+        self.gcns = (self.gcns1, self.gcns2)
+
+        self.dropout = nn.Dropout(p=self.opt.dropout)
+        self.dense = nn.Linear(opt.hidden_dim * 4, 1)
+        # self.dense = nn.Linear(opt.hidden_dim * 4, 2)
+
+    def forward(self, inputs: dict, fine_tuning: bool = False) -> torch.FloatTensor:
+        """Model pipeline for AERGCN.
+
+        Args:
+            inputs (dict): {
+                'id' (list of str): Sentence pair ids.
+                'lemma' (list of str): Target lemmas.
+                'pos' (list of str): POS tags of the lemmas.
+                'sentence1' (list of str): First sentences.
+                'sentence2' (list of str): Second sentences.
+                'start1' (list of int): Start indices of the lemmas in the first sentence.
+                'end1' (list of int): End indices of the lemmas in the first sentence.
+                'start2' (list of int): Start indices of the lemmas in the second sentence.
+                'end2' (list of int): End indices of the lemmas in the second sentence.
+                'label' (list of str): Labels of the sentence pairs.
+                'token1' (list of str): Exact tokens of the lemmas in first sentences.
+                'token2' (list of str): Exact tokens of the lemmas in second sentences.
+                'alignment1' (list of list of list of int): Alignment between the tokens in the first sentence and the word-pieces encoded by the BERT models.
+                'start_offset1' (torch.LongTensor): Indices indicating the start token position of the first sentences (excluding special tokens). 1D tensor.
+                'end_offset1' (torch.LongTensor): Indices indicating the end token position of the first sentences (excluding special tokens). 1D tensor.
+                'pos_tags1' (torch.LongTensor): POS tag indices corresponding to the tokens in the first sentences. 2D tensor (batch_size, max_sequence_length of sentences).
+                'alignment2' (list of list of list of int): Alignment between the tokens in the second sentence and the word-pieces encoded by the BERT models.
+                'start_offset2' (torch.LongTensor): Indices indicating the start token position of the second sentences (excluding special tokens). 1D tensor.
+                'end_offset2' (torch.LongTensor): Indices indicating the end token position of the second sentences (excluding special tokens). 1D tensor.
+                'pos_tags2' (torch.LongTensor): POS tag indices corresponding to the tokens in the second sentences. 2D tensor (batch_size, max_sequence_length of sentences).
+                'context_masks1' (torch.LongTensor): Indices used to mask padded tokens for the first sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'input_ids1' (torch.LongTensor): Token indices for the first sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'adjacency_tensors1' (tensor.FLoatTensor): Padded encoded adjacency tensors for the first sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
+                'context_masks2' (torch.LongTensor): Indices used to mask padded tokens for the second sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'input_ids2' (torch.LongTensor): Token indices for the second sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'adjacency_tensors2' (tensor.FLoatTensor): Padded encoded adjacency tensors for the second sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
+            }
+            fine_tuning (bool, optional): [description]. Defaults to False.
+
+        Returns:
+            torch.FloatTensor: [description]
+        """
+        # tmp_int_time = time.time()
+        # for i_lang, lang in enumerate([self.opt.lang_1, self.opt.lang_2], start=1):
+        concat_tmp = []
+        for i_lang, model_part in enumerate(zip(
+                # self.text_embeddings,
+                self.pos_tag_embeddings,
+                self.lin_sem,
+                self.lin_syn,
+                self.attn_sem,
+                self.attn_syn,
+                self.gcns
+        ), start=1):
+            # text_embeddings, pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, rgcns = model_part
+            pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, gcns = model_part
+            text_embeddings = self.text_embeddings
+
+            input_ids = inputs[f'input_ids{i_lang}'].to(self.opt.device)
+
+            if fine_tuning:
+                text_embeddings.train()
+                text = text_embeddings(input_ids)[0]
+            else:
+                text_embeddings.eval()
+                with torch.no_grad():
+                    text = text_embeddings(input_ids)[0]
+            context_masks = inputs[f'context_masks{i_lang}']
+
+            embedding_len = torch.sum(context_masks, dim=-1)
+            if self.opt.embed_dim != self.opt.hidden_dim:
+                text_out = lin_sem(text)
+            else:
+                text_out = text
+
+            sem_attn, _ = attn_sem(text_out, text_out)
+
+            # print('hc: {}s'.format(time.time() - tmp_int_time))
+            # tmp_int_time = time.time()
+
+            if not self.opt.include_pos_tags:
+                embeddings = text_out
+                alignments = inputs[f'alignment{i_lang}']
+
+                aligned_embeddings = list(map(align_embedding, list(embeddings), alignments))
+                syntax_text_len = torch.tensor(list(map(len, aligned_embeddings))).to(self.opt.device)
+                syntax_text_out = pad_sequence(aligned_embeddings, batch_first=True)
+
+            else:
+                syntax_text_len = torch.sum(
+                    inputs[f'pos_tags{i_lang}'] != 0, dim=-1).to(self.opt.device)
+                syntax_text_out = pos_tag_embeddings(inputs[f'pos_tags{i_lang}'].to(self.opt.device))
+                syntax_text_len = torch.sum(
+                    inputs[f'pos_tags{i_lang}'] != 0, dim=-1).to(self.opt.device)
+
+                if self.opt.embed_dim != self.opt.hidden_dim:
+                    syntax_text_out = lin_syn(syntax_text_out)
+
+            # print('Prepare syntactic branch: {}s'.format(time.time() - tmp_int_time))
+            # tmp_int_time = time.time()
+
+            adj = inputs[f'adjacency_tensors{i_lang}'].to(self.opt.device)
+            adj = torch.sum(adj, dim=1)
+            adj = torch.where(adj > 0, torch.ones_like(adj), adj)
+
+            syn_embeddings = gcns(syntax_text_out, adj)
+
+            syn_attn, _ = attn_syn(syn_embeddings, syn_embeddings)
+
+            # print('hg: {}s'.format(time.time() - tmp_int_time))
+            # tmp_int_time = time.time()
+
+            embedding_len = embedding_len.to(device=self.opt.device, dtype=torch.float)
+
+            sem_attn_mean = torch.div(torch.sum(sem_attn, dim=1), embedding_len.view(embedding_len.size(0), 1))
+            syn_attn_mean = torch.div(torch.sum(syn_attn, dim=1), syntax_text_len.view(syntax_text_len.size(0), 1))
+
+            concat_tmp.extend([sem_attn_mean, syn_attn_mean])
+
+        concat_embeddings = torch.cat(concat_tmp, dim=-1)
+        output = self.dense(self.dropout(concat_embeddings))
+
+        # print('Final classification: {}s'.format(time.time() - tmp_int_time))
+        # tmp_int_time = time.time()
+
+        return output
+
+
+class AEGCN_lite(nn.Module):
+    """Class for the AERGCN model.
+    """
+
+    def __init__(self, opt: Any):
+        """Instantiate the AERGCN model with the parsed arguments.
+
+        Args:
+            opt (Any): Parsed command-line arguments.
+        """
+        super(AEGCN_lite, self).__init__()
+        self.opt = opt
+
+        self.text_embeddings = AutoModel.from_pretrained(opt.embed_model_name)
+
+        if opt.include_pos_tags:
+            self.pos_tag_embeddings1 = nn.Embedding(
+                opt.num_pos_tag1, opt.embed_dim, padding_idx=0)
+            if opt.lang_1 != opt.lang_2:
+                self.pos_tag_embeddings2 = nn.Embedding(
+                    opt.num_pos_tag2, opt.embed_dim, padding_idx=0)
+            else:
+                self.pos_tag_embeddings2 = self.pos_tag_embeddings1
+
+            self.pos_tag_embeddings = (self.pos_tag_embeddings1, self.pos_tag_embeddings2)
+        else:
+            self.pos_tag_embeddings = (None, None)
+
+        if opt.embed_dim != opt.hidden_dim:
+            self.lin_sem1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+
+            if not opt.multi_lingual:
+                self.lin_sem2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+            else:
+                self.lin_sem2 = self.lin_sem1
+
+            self.lin_sem = (self.lin_sem1, self.lin_sem2)
+
+            if opt.include_pos_tags:
+                self.lin_syn1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+
+                if opt.lang_1 != opt.lang_2:
+                    self.lin_syn2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+                else:
+                    self.lin_syn2 = self.lin_syn1
+
+                self.lin_syn = (self.lin_syn1, self.lin_syn2)
+            else:
+                self.lin_syn = (None, None)
+
+        self.gcns1 = GCN_module(
+            num_layer=opt.num_rgcn_layer,
+            in_features=opt.hidden_dim,
+            out_features=opt.hidden_dim,
+        )
+
+        if opt.lang_1 != opt.lang_2:
+            self.gcns2 = GCN_module(
+                num_layer=opt.num_rgcn_layer,
+                in_features=opt.hidden_dim,
+                out_features=opt.hidden_dim,
+            )
+        else:
+            self.gcns2 = self.gcns1
+
+        self.gcns = (self.gcns1, self.gcns2)
+
+        self.dropout = nn.Dropout(p=self.opt.dropout)
+        self.dense = nn.Linear(opt.hidden_dim * 4, 1)
+        # self.dense = nn.Linear(opt.hidden_dim * 4, 2)
+
+    def forward(self, inputs: dict, fine_tuning: bool = False) -> torch.FloatTensor:
+        """Model pipeline for AERGCN.
+
+        Args:
+            inputs (dict): {
+                'id' (list of str): Sentence pair ids.
+                'lemma' (list of str): Target lemmas.
+                'pos' (list of str): POS tags of the lemmas.
+                'sentence1' (list of str): First sentences.
+                'sentence2' (list of str): Second sentences.
+                'start1' (list of int): Start indices of the lemmas in the first sentence.
+                'end1' (list of int): End indices of the lemmas in the first sentence.
+                'start2' (list of int): Start indices of the lemmas in the second sentence.
+                'end2' (list of int): End indices of the lemmas in the second sentence.
+                'label' (list of str): Labels of the sentence pairs.
+                'token1' (list of str): Exact tokens of the lemmas in first sentences.
+                'token2' (list of str): Exact tokens of the lemmas in second sentences.
+                'alignment1' (list of list of list of int): Alignment between the tokens in the first sentence and the word-pieces encoded by the BERT models.
+                'start_offset1' (torch.LongTensor): Indices indicating the start token position of the first sentences (excluding special tokens). 1D tensor.
+                'end_offset1' (torch.LongTensor): Indices indicating the end token position of the first sentences (excluding special tokens). 1D tensor.
+                'pos_tags1' (torch.LongTensor): POS tag indices corresponding to the tokens in the first sentences. 2D tensor (batch_size, max_sequence_length of sentences).
+                'alignment2' (list of list of list of int): Alignment between the tokens in the second sentence and the word-pieces encoded by the BERT models.
+                'start_offset2' (torch.LongTensor): Indices indicating the start token position of the second sentences (excluding special tokens). 1D tensor.
+                'end_offset2' (torch.LongTensor): Indices indicating the end token position of the second sentences (excluding special tokens). 1D tensor.
+                'pos_tags2' (torch.LongTensor): POS tag indices corresponding to the tokens in the second sentences. 2D tensor (batch_size, max_sequence_length of sentences).
+                'context_masks1' (torch.LongTensor): Indices used to mask padded tokens for the first sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'input_ids1' (torch.LongTensor): Token indices for the first sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'adjacency_tensors1' (tensor.FLoatTensor): Padded encoded adjacency tensors for the first sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
+                'context_masks2' (torch.LongTensor): Indices used to mask padded tokens for the second sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'input_ids2' (torch.LongTensor): Token indices for the second sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'adjacency_tensors2' (tensor.FLoatTensor): Padded encoded adjacency tensors for the second sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
+            }
+            fine_tuning (bool, optional): [description]. Defaults to False.
+
+        Returns:
+            torch.FloatTensor: [description]
+        """
+        # tmp_int_time = time.time()
+        # for i_lang, lang in enumerate([self.opt.lang_1, self.opt.lang_2], start=1):
+        concat_tmp = []
+        for i_lang, model_part in enumerate(zip(
+                # self.text_embeddings,
+                self.pos_tag_embeddings,
+                self.lin_sem,
+                self.lin_syn,
+                self.gcns
+        ), start=1):
+            # text_embeddings, pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, rgcns = model_part
+            pos_tag_embeddings, lin_sem, lin_syn, gcns = model_part
+            text_embeddings = self.text_embeddings
+
+            input_ids = inputs[f'input_ids{i_lang}'].to(self.opt.device)
+
+            if fine_tuning:
+                text_embeddings.train()
+                text = text_embeddings(input_ids)[0]
+            else:
+                text_embeddings.eval()
+                with torch.no_grad():
+                    text = text_embeddings(input_ids)[0]
+            context_masks = inputs[f'context_masks{i_lang}']
+
+            embedding_len = torch.sum(context_masks, dim=-1)
+            if self.opt.embed_dim != self.opt.hidden_dim:
+                text_out = lin_sem(text)
+            else:
+                text_out = text
+
+            # print('hc: {}s'.format(time.time() - tmp_int_time))
+            # tmp_int_time = time.time()
+
+            if not self.opt.include_pos_tags:
+                embeddings = text_out
+                alignments = inputs[f'alignment{i_lang}']
+
+                aligned_embeddings = list(map(align_embedding, list(embeddings), alignments))
+                syntax_text_len = torch.tensor(list(map(len, aligned_embeddings))).to(self.opt.device)
+                syntax_text_out = pad_sequence(aligned_embeddings, batch_first=True)
+
+            else:
+                syntax_text_len = torch.sum(
+                    inputs[f'pos_tags{i_lang}'] != 0, dim=-1).to(self.opt.device)
+                syntax_text_out = pos_tag_embeddings(inputs[f'pos_tags{i_lang}'].to(self.opt.device))
+                syntax_text_len = torch.sum(
+                    inputs[f'pos_tags{i_lang}'] != 0, dim=-1).to(self.opt.device)
+
+                if self.opt.embed_dim != self.opt.hidden_dim:
+                    syntax_text_out = lin_syn(syntax_text_out)
+
+            # print('Prepare syntactic branch: {}s'.format(time.time() - tmp_int_time))
+            # tmp_int_time = time.time()
+
+            adj = inputs[f'adjacency_tensors{i_lang}'].to(self.opt.device)
+            adj = torch.sum(adj, dim=1)
+            adj = torch.where(adj > 0, torch.ones_like(adj), adj)
+
+            syn_embeddings = gcns(syntax_text_out, adj)
+
+            # print('hg: {}s'.format(time.time() - tmp_int_time))
+            # tmp_int_time = time.time()
+
+            embedding_len = embedding_len.to(device=self.opt.device, dtype=torch.float)
+
+            sem_attn_mean = torch.div(torch.sum(text_out, dim=1), embedding_len.view(embedding_len.size(0), 1))
+            syn_attn_mean = torch.div(torch.sum(syn_embeddings, dim=1),
+                                      syntax_text_len.view(syntax_text_len.size(0), 1))
+
+            concat_tmp.extend([sem_attn_mean, syn_attn_mean])
+
+        concat_embeddings = torch.cat(concat_tmp, dim=-1)
+        output = self.dense(self.dropout(concat_embeddings))
 
         # print('Final classification: {}s'.format(time.time() - tmp_int_time))
         # tmp_int_time = time.time()
@@ -874,7 +1280,7 @@ class GCN_layer(nn.Module):
     """Class for PyTorch implementation of a GCN layer.
     """
 
-    def __init__(self, in_features: int, out_features: int, bias: bool = True):
+    def __init__(self, in_features: int, out_features: int):
         """Constructor for the class.
 
         Args:
@@ -887,10 +1293,6 @@ class GCN_layer(nn.Module):
         self.out_features = out_features
         self.weight = nn.Parameter(
             torch.FloatTensor(in_features, out_features))
-        if bias:
-            self.bias = nn.Parameter(torch.FloatTensor(out_features))
-        else:
-            self.register_parameter('bias', None)
 
     def forward(self, text: torch.FloatTensor, adj: torch.FloatTensor) -> torch.FloatTensor:
         """Pipeline for a GCN layer.
@@ -906,30 +1308,26 @@ class GCN_layer(nn.Module):
         denom = torch.sum(adj, dim=2, keepdim=True)
         intm = torch.matmul(adj, hidden)
         output = intm / \
-            torch.where(torch.eq(intm, torch.zeros_like(intm)),
+            torch.where(torch.eq(denom, torch.zeros_like(denom)),
                         torch.ones_like(denom), denom)
-        if self.bias is not None:
-            return F.relu(output + self.bias, inplace=False)
-        else:
-            return F.relu(output, inplace=False)
+        return F.relu(output, inplace=False)
 
 
 class GCN_module(nn.Module):
     """Class for stacking multiple layers of GCN.
     """
 
-    def __init__(self, num_layer: int, in_features: int, out_features: int, bias: bool = True):
+    def __init__(self, num_layer: int, in_features: int, out_features: int):
         """Constructor for the class.
 
         Args:
             num_layer (int): Number of GCN layers to stack.
             in_features (int): Size of input features.
             out_features (int): Size of output features.
-            bias (bool, optional): Flag for bias. Defaults to True.
         """
         super(GCN_module, self).__init__()
         self.gcns = nn.ModuleList([GCN_layer(
-            in_features=in_features, out_features=out_features, bias=bias) for _ in np.arange(num_layer)])
+            in_features=in_features, out_features=out_features) for _ in np.arange(num_layer)])
 
     def forward(self, x: torch.FloatTensor, adj: torch.FloatTensor) -> torch.FloatTensor:
         """Pipeline for the GCN module.

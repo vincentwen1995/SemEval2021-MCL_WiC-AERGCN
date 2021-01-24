@@ -5,7 +5,7 @@ from AERGCN.word_embeddings.embedders import BatchEmbedder
 
 
 def main():
-    batch_embedder = BatchEmbedder()
+    batch_embedder = BatchEmbedder(model_path='xlm-roberta-large')
     dataset_train = MCL_WiC_Dataset(
         split='training',
         lang_1='en',
@@ -16,6 +16,17 @@ def main():
     )
     print(len(dataset_train))
     print(dataset_train[len(dataset_train) - 1])
+
+    dataset_dev = MCL_WiC_Dataset(
+        split='development',
+        lang_1='en',
+        lang_2='en',
+        include_pos_tags=False,
+        batch_embedder=batch_embedder,
+        k=20,
+    )
+    print(len(dataset_dev))
+    print(dataset_dev[len(dataset_dev) - 1])
 
     dataloader_train = DataLoader(
         dataset=dataset_train,

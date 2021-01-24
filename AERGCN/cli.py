@@ -94,11 +94,11 @@ class Interface:
             model_path=opt.embed_model_name)
         self.nlp = spacy.load('en_core_web_sm')
 
-        if self.opt.label_smoothing:
-            Loss = LabelSmoothingCrossEntropyLoss
-        else:
-            # Loss = nn.CrossEntropyLoss
-            Loss = nn.BCEWithLogitsLoss
+        # if self.opt.label_smoothing:
+        #     Loss = LabelSmoothingCrossEntropyLoss
+        # else:
+        #     # Loss = nn.CrossEntropyLoss
+        Loss = nn.BCEWithLogitsLoss
 
         self.semeval_train = MCL_WiC_Dataset(
             split='training',
@@ -437,7 +437,16 @@ class Interface:
                 # print('Network forward: {}s'.format(time.time() - tmp_int_time))
                 # tmp_int_time = time.time()
 
-                loss = self.criterion(outputs, targets.to(dtype=torch.float).reshape_as(outputs))
+                # loss = self.criterion(outputs, targets)
+                if self.opt.label_smoothing:
+                    loss_targets = torch.where(
+                        torch.eq(targets, torch.zeros_like(targets, dtype=torch.long)),
+                        torch.zeros_like(targets, dtype=torch.float) + self.opt.ls_eps,
+                        torch.ones_like(targets, dtype=torch.float) - self.opt.ls_eps,
+                    ).unsqueeze(dim=1)
+                else:
+                    loss_targets = targets.to(dtype=torch.float).unsqueeze(dim=1)
+                loss = self.criterion(outputs, loss_targets)
 
                 # print('Compute loss: {}s'.format(time.time() - tmp_int_time))
                 # tmp_int_time = time.time()
@@ -604,9 +613,10 @@ class Interface:
                 #         (t_outputs_all, t_outputs), dim=0)
             t_outputs_all = torch.cat(t_outputs_all, dim=0)
             t_targets_all = torch.cat(t_targets_all, dim=0)
-            loss = self.eval_criterion(t_outputs_all, t_targets_all.to(dtype=torch.float).reshape_as(t_outputs_all))
+            # loss = self.eval_criterion(t_outputs_all, t_targets_all)
+            loss = self.eval_criterion(t_outputs_all, t_targets_all.to(dtype=torch.float).unsqueeze(dim=1))
 
-        t_targets_all = t_targets_all.numpy()
+        # t_targets_all = t_targets_all.numpy()
         # t_outputs_all = torch.argmax(t_outputs_all, dim=-1).numpy()
         t_outputs_all = torch.round(torch.sigmoid(t_outputs_all)).numpy()
         results['eval_acc'] = accuracy_score(t_targets_all, t_outputs_all)

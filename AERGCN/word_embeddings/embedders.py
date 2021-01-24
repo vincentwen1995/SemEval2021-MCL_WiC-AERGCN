@@ -1,6 +1,6 @@
 # import time
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, List
 
 import numpy as np
 import torch
@@ -60,6 +60,45 @@ class Embedder(object):
             print(f"Token (str): {self.tokenizer.convert_ids_to_tokens(input_ids[0])}")
             print(f"Token (int): {input_ids}")
             print(f"Context mask: {context_mask}")
+
+    """Authored by Yury Kashnitsky <kashnitsky @ Kaggle>"""
+
+    @staticmethod
+    def get_indices_of_the_words_by_start_char_id(offset_mapping: List[Tuple[int, int]],
+                                                  start_char_id1: int,
+                                                  start_char_id2: int):
+        """
+        :param offset_mapping: a list of tuples, each of them indicating start and end ids 
+                                (in the original string) of word 
+                                pieces after tokenization with XLMRobertaTokenizerFast
+        :param start_char_id1: start id in the first sentence
+        :param start_char_id2: start id in the second sentence
+
+        """
+
+        zero_idx = [i for i, (s, e) in enumerate(offset_mapping) if (s, e) == (0, 0)]
+
+        offset_mapping_first_sent = offset_mapping[:zero_idx[1]]
+        offset_mapping_second_sent = offset_mapping[zero_idx[1]:]
+
+        id1, id2 = 0, 0
+        for i, (s, e) in enumerate(offset_mapping_first_sent):
+            if (s, e) == (0, 0):
+                continue
+            if s == start_char_id1:
+                id1 = i
+                break
+
+        for i, (s, e) in enumerate(offset_mapping_second_sent):
+            if (s, e) == (0, 0):
+                continue
+            if s == start_char_id2:
+                id2 = i
+                break
+
+        id2 += len(offset_mapping_first_sent)
+
+        return id1, id2
 
 
 class BatchEmbedder(Embedder):
