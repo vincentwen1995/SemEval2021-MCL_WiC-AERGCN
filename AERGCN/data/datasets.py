@@ -80,7 +80,7 @@ class MCL_WiC_Dataset(Dataset):
         self.adjacency_dict = {}
         for i_lang, lang in enumerate([self.lang_1, self.lang_2], start=1):
 
-            self.df[f'token{i_lang}'] = self.df.apply(
+            self.df[f'lemma{i_lang}'] = self.df.apply(
                 func=lambda row: row[f'sentence{i_lang}'][row[f'start{i_lang}']: row[f'end{i_lang}']], axis=1)
             # NOTE: Temporary fix for RoBERTa models from huggingface transformers.
             self.df[f'sentence{i_lang}'] = self.df[f'sentence{i_lang}'].apply(
@@ -143,7 +143,7 @@ class MCL_WiC_Dataset(Dataset):
             self.adjacency_dict[i_lang] = adjacency_dict
             del aux_dict
 
-        self.df = self.df.drop(['start1', 'end1', 'start2', 'end2', 'tag'], axis=1)
+        self.df = self.df.drop(['tag'], axis=1)
 
     def __len__(self):
         return self.df.shape[0]
@@ -182,9 +182,14 @@ class MCL_WiC_Dataset(Dataset):
 
         batch_outputs_dict['label'] = torch.LongTensor(batch_outputs_dict['label'])
 
+        token_dict = self.batch_embedder(batch_outputs_dict['sentence1'], batch_outputs_dict['sentence2'])
+
+        batch_outputs_dict['context_masks'], batch_outputs_dict['input_ids'], batch_outputs_dict[
+            'offset_mapping'] = token_dict['attention_mask'], token_dict['input_ids'], token_dict['offset_mapping']
+
         for i_lang, lang in enumerate([self.lang_1, self.lang_2], start=1):
-            batch_outputs_dict[f'context_masks{i_lang}'], batch_outputs_dict[f'input_ids{i_lang}'] = self.batch_embedder(
-                batch_outputs_dict[f'sentence{i_lang}'], batch_outputs_dict[f'token{i_lang}'])
+            # batch_outputs_dict[f'context_masks{i_lang}'], batch_outputs_dict[f'input_ids{i_lang}'] = self.batch_embedder(
+            #     batch_outputs_dict[f'sentence{i_lang}'], batch_outputs_dict[f'lemma{i_lang}'])
             # Create tensors for the batch output dictionaries.
             batch_outputs_dict[f'start_offset{i_lang}'] = torch.LongTensor(
                 batch_outputs_dict[f'start_offset{i_lang}'])

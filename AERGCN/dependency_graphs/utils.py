@@ -13,7 +13,7 @@ from spacy.language import Language
 from scipy.sparse import coo_matrix
 from tokenizations import get_alignments
 from typing import Tuple
-from AERGCN.word_embeddings.embedders import Embedder, BatchEmbedder
+from AERGCN.word_embeddings.embedders import Embedder
 
 
 def get_traceback(f):
@@ -53,7 +53,7 @@ class DependencyEncoder(object):
             pickle.dump(self.dependency2ind, b_file)
 
     @get_traceback
-    def process_single_core(self, proc_id: int, row_inds: np.ndarray, df: DataFrame, embedder: BatchEmbedder, text_col: str, tree: bool) -> Tuple[dict, Counter, Counter]:
+    def process_single_core(self, proc_id: int, row_inds: np.ndarray, df: DataFrame, embedder: Embedder, text_col: str, tree: bool) -> Tuple[dict, Counter, Counter]:
         num_dependencies = len(self.dependencies)
         adjacency_dict = {}
         dep_list = []
@@ -70,7 +70,8 @@ class DependencyEncoder(object):
             adjacency_dict[id_] = {}
             current_dict = adjacency_dict[id_]
             # NOTE: Could be modified to other columns.
-            _, input_ids = embedder(text)
+            token_dict = embedder(text)
+            input_ids = token_dict['input_ids']
             spacy_tokens = [token.text for token in document]
             transformer_tokens = embedder.tokenizer.convert_ids_to_tokens(
                 input_ids[0])

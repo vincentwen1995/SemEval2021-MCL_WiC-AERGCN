@@ -88,8 +88,6 @@ class Interface:
         self.best_model_dir = self.log_dir / 'best_state_dict'
         self.best_model_dir.mkdir(parents=True, exist_ok=True)
 
-        # self.batch_embedder = BatchEmbedder(
-        #     model_path=opt.embed_model_name1)
         self.batch_embedder = BatchEmbedder(
             model_path=opt.embed_model_name)
         self.nlp = spacy.load('en_core_web_sm')

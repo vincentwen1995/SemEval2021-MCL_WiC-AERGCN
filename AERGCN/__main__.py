@@ -5,8 +5,7 @@ import numpy as np
 import torch
 
 from AERGCN.cli import Interface
-from AERGCN.input_pipeline.models import AEGCN_lite, AERGCN, AEGCN, AERGCN_no_R, AERGCN_no_MHA, FullSemantic, FullSemantic_no_MHA, \
-    AERGCN_no_syn_MHA, AERGCN_no_MHIA
+from AERGCN.input_pipeline.models import AEGCN_lite, AERGCN, AEGCN, AERGCN_lite
 
 
 def main():
@@ -23,16 +22,10 @@ def main():
                         help='Specify the logging directory to save the outputs.')
     parser.add_argument('--DEBUG', default=False,
                         type=bool_str, help='Specify DEBUG mode.')
-    parser.add_argument('--model_name', default='AERGCN', type=str,
-                        help='Specify the model to run: AERGCN, AERGCN_no_R or AERGCN_no_MHA, FullSemantic, FullSemantic_no_MHA, AERGCN_no_syn_MHA, AERGCN_no_MHIA.')
+    parser.add_argument('--model_name', default='AERGCN', type=str, choices=['AERGCN', 'AERGCN_lite', 'AEGCN', 'AEGCN_lite'],
+                        help='Specify the model to run: AERGCN, AERGCN_lite, AEGCN, AEGCN_lite.')
     parser.add_argument('--embed_model_name',
                         default='xlm-roberta-base', type=str, help='Specify the path to the saved Huggingface\'s transformer model or the name of the provided ones.')
-    # parser.add_argument('--embed_model_name1',
-    #                     default='xlm-roberta-base', type=str, help='Specify the path to the saved Huggingface\'s transformer model or the name of the provided ones. This is used for the first language of the sentence pairs.')
-    parser.add_argument('--multi_lingual', default=True, type=bool_str,
-                        help='Specify whether the used semantic embedding model supports multiple languages.')
-    # parser.add_argument('--embed_model_name2',
-    #                     default='xlm-roberta-base', type=str, help='Specify the path to the saved Huggingface\'s transformer model or the name of the provided ones. This is used for the second language of the sentence pairs. If the language model is multi-lingual, only embed_model_name1 needs to be specified.')
     parser.add_argument('--lang_1', default='en', type=str,
                         help='Specify the language of the first sentence in the sentence pair of the dataset.')
     parser.add_argument('--lang_2', default='en', type=str,
@@ -81,14 +74,9 @@ def main():
 
     opt = parser.parse_args()
 
-    if opt.multi_lingual is False:
-        raise NotImplementedError('Mono-lingual language models are currently not supported.')
-
-    if opt.model_name != 'AERGCN' and opt.model_name != 'AEGCN' and opt.model_name != 'AEGCN_lite':
-        raise NotImplementedError('Other variants of the AERGCN model are currently not supported.')
-
     model_classes = {
         'AERGCN': AERGCN,
+        'AERGCN_lite': AERGCN_lite,
         'AEGCN': AEGCN,
         'AEGCN_lite': AEGCN_lite,
     }

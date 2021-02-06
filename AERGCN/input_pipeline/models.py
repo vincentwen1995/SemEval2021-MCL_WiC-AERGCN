@@ -8,6 +8,7 @@ import torch.nn.functional as F
 # import time
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModel
+from AERGCN.word_embeddings.embedders import Embedder
 
 
 class AERGCN(nn.Module):
@@ -22,15 +23,6 @@ class AERGCN(nn.Module):
         """
         super(AERGCN, self).__init__()
         self.opt = opt
-
-        # text_embeddings1 = AutoModel.from_pretrained(opt.embed_model_name1)
-
-        # if not opt.multi_lingual:
-        #     text_embeddings2 = AutoModel.from_pretrained(opt.embed_model_name2)
-        # else:
-        #     text_embeddings2 = text_embeddings1
-
-        # self.text_embeddings = (text_embeddings1, text_embeddings2)
 
         self.text_embeddings = AutoModel.from_pretrained(opt.embed_model_name)
 
@@ -48,14 +40,7 @@ class AERGCN(nn.Module):
             self.pos_tag_embeddings = (None, None)
 
         if opt.embed_dim != opt.hidden_dim:
-            self.lin_sem1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
-
-            if not opt.multi_lingual:
-                self.lin_sem2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
-            else:
-                self.lin_sem2 = self.lin_sem1
-
-            self.lin_sem = (self.lin_sem1, self.lin_sem2)
+            self.lin_sem = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
 
             if opt.include_pos_tags:
                 self.lin_syn1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
@@ -69,16 +54,8 @@ class AERGCN(nn.Module):
             else:
                 self.lin_syn = (None, None)
 
-        self.attn_sem1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
-                                   score_function=opt.score_function, dropout=opt.dropout)
-
-        if not opt.multi_lingual:
-            self.attn_sem2 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
-                                       score_function=opt.score_function, dropout=opt.dropout)
-        else:
-            self.attn_sem2 = self.attn_sem1
-
-        self.attn_sem = (self.attn_sem1, self.attn_sem2)
+        self.attn_sem = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
+                                  score_function=opt.score_function, dropout=opt.dropout)
 
         self.attn_syn1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
                                    score_function=opt.score_function, dropout=opt.dropout)
@@ -115,8 +92,8 @@ class AERGCN(nn.Module):
         self.rgcns = (self.rgcns1, self.rgcns2)
 
         self.dropout = nn.Dropout(p=self.opt.dropout)
-        self.dense = nn.Linear(opt.hidden_dim * 4, 1)
-        # self.dense = nn.Linear(opt.hidden_dim * 4, 2)
+        self.dense = nn.Linear(opt.hidden_dim * 5, 1)
+        # self.dense = nn.Linear(opt.hidden_dim * 5, 2)
 
     def forward(self, inputs: dict, fine_tuning: bool = False) -> torch.FloatTensor:
         """Model pipeline for AERGCN.
@@ -133,8 +110,8 @@ class AERGCN(nn.Module):
                 'start2' (list of int): Start indices of the lemmas in the second sentence.
                 'end2' (list of int): End indices of the lemmas in the second sentence.
                 'label' (list of str): Labels of the sentence pairs.
-                'token1' (list of str): Exact tokens of the lemmas in first sentences.
-                'token2' (list of str): Exact tokens of the lemmas in second sentences.
+                'lemma1' (list of str): Exact form of the lemmas in first sentences.
+                'lemma2' (list of str): Exact form of the lemmas in second sentences.
                 'alignment1' (list of list of list of int): Alignment between the tokens in the first sentence and the word-pieces encoded by the BERT models.
                 'start_offset1' (torch.LongTensor): Indices indicating the start token position of the first sentences (excluding special tokens). 1D tensor.
                 'end_offset1' (torch.LongTensor): Indices indicating the end token position of the first sentences (excluding special tokens). 1D tensor.
@@ -143,12 +120,11 @@ class AERGCN(nn.Module):
                 'start_offset2' (torch.LongTensor): Indices indicating the start token position of the second sentences (excluding special tokens). 1D tensor.
                 'end_offset2' (torch.LongTensor): Indices indicating the end token position of the second sentences (excluding special tokens). 1D tensor.
                 'pos_tags2' (torch.LongTensor): POS tag indices corresponding to the tokens in the second sentences. 2D tensor (batch_size, max_sequence_length of sentences).
-                'context_masks1' (torch.LongTensor): Indices used to mask padded tokens for the first sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
-                'input_ids1' (torch.LongTensor): Token indices for the first sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
                 'adjacency_tensors1' (tensor.FLoatTensor): Padded encoded adjacency tensors for the first sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
-                'context_masks2' (torch.LongTensor): Indices used to mask padded tokens for the second sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
-                'input_ids2' (torch.LongTensor): Token indices for the second sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
                 'adjacency_tensors2' (tensor.FLoatTensor): Padded encoded adjacency tensors for the second sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
+                'context_masks' (torch.LongTensor): Indices used to mask padded tokens for the sentence pairs. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'input_ids' (torch.LongTensor): Token indices for the sentence pairs. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'offset_mapping' (torch.LongTensor): Character indices for each token in the sentence pairs. 3D tensor (batch_size, max_sequence_length of concatenated sentence pairs, 2)
             }
             fine_tuning (bool, optional): [description]. Defaults to False.
 
@@ -158,43 +134,83 @@ class AERGCN(nn.Module):
         # tmp_int_time = time.time()
         # for i_lang, lang in enumerate([self.opt.lang_1, self.opt.lang_2], start=1):
         concat_tmp = []
+        input_ids = inputs['input_ids'].to(self.opt.device)
+
+        if fine_tuning:
+            self.text_embeddings.train()
+            text = self.text_embeddings(input_ids)[0]
+        else:
+            self.text_embeddings.eval()
+            with torch.no_grad():
+                text = self.text_embeddings(input_ids)[0]
+        context_masks = inputs['context_masks']
+
+        embedding_len = torch.sum(context_masks, dim=-1)
+        if self.opt.embed_dim != self.opt.hidden_dim:
+            text_out = self.lin_sem(text)
+        else:
+            text_out = text
+
+        sem_attn, _ = self.attn_sem(text_out, text_out)
+        embedding_len = embedding_len.to(device=self.opt.device, dtype=torch.float)
+        sem_attn_mean = torch.div(torch.sum(sem_attn, dim=1), embedding_len.view(embedding_len.size(0), 1))
+
+        sentence_pair_offset = inputs['end_offset1'] + 1
+        sentence2_end = sentence_pair_offset + inputs['end_offset2']
+
+        # Split the embeddings of the first and second sentences.
+        embeddings1, embeddings2 = [], []
+        for text_out_row, start_ind2, end_ind2 in zip(text_out, sentence_pair_offset, sentence2_end):
+            embeddings1_row, embeddings2_row = text_out_row[0:start_ind2], text_out_row[start_ind2:end_ind2 + 1]
+            embeddings1.append(embeddings1_row)
+            embeddings2.append(embeddings2_row)
+
+        embeddings1 = pad_sequence(embeddings1, batch_first=True)
+        embeddings2 = pad_sequence(embeddings2, batch_first=True)
+
+        self.embeddings = (embeddings1, embeddings2)
+
+        # Find the lemma embeddings from the splitted sentence embeddings.
+        lemma_embeddings1, lemma_embeddings2 = [], []
+        for batch_i, (embeddings1_row, embeddings2_row, offset_mapping, start1, start2, alignment1, alignment2) \
+                in enumerate(zip(embeddings1, embeddings2, inputs['offset_mapping'], inputs['start1'], inputs['start2'], inputs['alignment1'], inputs['alignment2'])):
+            # Find the indices of the tokens that represent (part of) the lemmas.
+            lemma_ind1, lemma_ind2 = Embedder.get_indices_of_the_words_by_start_char_id(offset_mapping, start1, start2)
+            for inds in alignment1:
+                # Sum up all the token embeddings that constitute the lemma (also check whether there is a skip in the alignment indices which should not happen, i.e. training.en-en.6638 sentence1)
+                if (lemma_ind1 in inds) or (len(inds) != 0 and lemma_ind1 > inds[0] and lemma_ind1 < inds[-1]):
+                    lemma_embeddings1.append(embeddings1_row[inds, :].sum(dim=0))
+                    break
+
+            for inds in alignment2:
+                if (lemma_ind2 in inds) or (len(inds) != 0 and lemma_ind2 > inds[0] and lemma_ind2 < inds[-1]):
+                    lemma_embeddings2.append(embeddings2_row[inds, :].sum(dim=0))
+                    break
+
+        lemma_embeddings1 = torch.stack(lemma_embeddings1, dim=0).to(self.opt.device)
+        lemma_embeddings2 = torch.stack(lemma_embeddings2, dim=0).to(self.opt.device)
+
+        concat_tmp.extend([sem_attn_mean, lemma_embeddings1, lemma_embeddings2])
+
         for i_lang, model_part in enumerate(zip(
-                # self.text_embeddings,
+                self.embeddings,
                 self.pos_tag_embeddings,
-                self.lin_sem,
+                # self.lin_sem,
                 self.lin_syn,
-                self.attn_sem,
+                # self.attn_sem,
                 self.attn_syn,
                 self.rgcns
         ), start=1):
             # text_embeddings, pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, rgcns = model_part
-            pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, rgcns = model_part
-            text_embeddings = self.text_embeddings
-
-            input_ids = inputs[f'input_ids{i_lang}'].to(self.opt.device)
-
-            if fine_tuning:
-                text_embeddings.train()
-                text = text_embeddings(input_ids)[0]
-            else:
-                text_embeddings.eval()
-                with torch.no_grad():
-                    text = text_embeddings(input_ids)[0]
-            context_masks = inputs[f'context_masks{i_lang}']
-
-            embedding_len = torch.sum(context_masks, dim=-1)
-            if self.opt.embed_dim != self.opt.hidden_dim:
-                text_out = lin_sem(text)
-            else:
-                text_out = text
-
-            sem_attn, _ = attn_sem(text_out, text_out)
+            text_embeddings, pos_tag_embeddings, lin_syn, attn_syn, rgcns = model_part
+            # text_embeddings = self.text_embeddings
 
             # print('hc: {}s'.format(time.time() - tmp_int_time))
             # tmp_int_time = time.time()
 
             if not self.opt.include_pos_tags:
-                embeddings = text_out
+                # embeddings = text_out
+                embeddings = text_embeddings
                 alignments = inputs[f'alignment{i_lang}']
 
                 aligned_embeddings = list(map(align_embedding, list(embeddings), alignments))
@@ -223,12 +239,232 @@ class AERGCN(nn.Module):
             # print('hg: {}s'.format(time.time() - tmp_int_time))
             # tmp_int_time = time.time()
 
-            embedding_len = embedding_len.to(device=self.opt.device, dtype=torch.float)
-
-            sem_attn_mean = torch.div(torch.sum(sem_attn, dim=1), embedding_len.view(embedding_len.size(0), 1))
             syn_attn_mean = torch.div(torch.sum(syn_attn, dim=1), syntax_text_len.view(syntax_text_len.size(0), 1))
 
-            concat_tmp.extend([sem_attn_mean, syn_attn_mean])
+            concat_tmp.extend([syn_attn_mean])
+
+        concat_embeddings = torch.cat(concat_tmp, dim=-1)
+        output = self.dense(self.dropout(concat_embeddings))
+
+        # print('Final classification: {}s'.format(time.time() - tmp_int_time))
+        # tmp_int_time = time.time()
+
+        return output
+
+
+class AERGCN_lite(nn.Module):
+    """Class for the AERGCN_lite model.
+    """
+
+    def __init__(self, opt: Any):
+        """Instantiate the AERGCN model with the parsed arguments.
+
+        Args:
+            opt (Any): Parsed command-line arguments.
+        """
+        super(AERGCN_lite, self).__init__()
+        self.opt = opt
+
+        self.text_embeddings = AutoModel.from_pretrained(opt.embed_model_name)
+
+        if opt.include_pos_tags:
+            self.pos_tag_embeddings1 = nn.Embedding(
+                opt.num_pos_tag1, opt.embed_dim, padding_idx=0)
+            if opt.lang_1 != opt.lang_2:
+                self.pos_tag_embeddings2 = nn.Embedding(
+                    opt.num_pos_tag2, opt.embed_dim, padding_idx=0)
+            else:
+                self.pos_tag_embeddings2 = self.pos_tag_embeddings1
+
+            self.pos_tag_embeddings = (self.pos_tag_embeddings1, self.pos_tag_embeddings2)
+        else:
+            self.pos_tag_embeddings = (None, None)
+
+        if opt.embed_dim != opt.hidden_dim:
+            self.lin_sem = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+
+            if opt.include_pos_tags:
+                self.lin_syn1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+
+                if opt.lang_1 != opt.lang_2:
+                    self.lin_syn2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
+                else:
+                    self.lin_syn2 = self.lin_syn1
+
+                self.lin_syn = (self.lin_syn1, self.lin_syn2)
+            else:
+                self.lin_syn = (None, None)
+
+        self.rgcns1 = R_GCN_module(
+            num_layer=opt.num_rgcn_layer,
+            in_features=opt.hidden_dim,
+            out_features=opt.hidden_dim,
+            num_dependencies=opt.num_dependencies1,
+            regularization=opt.regularization,
+            num_basis=opt.num_basis,
+        )
+
+        if opt.lang_1 != opt.lang_2:
+            self.rgcns2 = R_GCN_module(
+                num_layer=opt.num_rgcn_layer,
+                in_features=opt.hidden_dim,
+                out_features=opt.hidden_dim,
+                num_dependencies=opt.num_dependencies2,
+                regularization=opt.regularization,
+                num_basis=opt.num_basis,
+            )
+        else:
+            self.rgcns2 = self.rgcns1
+
+        self.rgcns = (self.rgcns1, self.rgcns2)
+
+        self.dropout = nn.Dropout(p=self.opt.dropout)
+        self.dense = nn.Linear(opt.hidden_dim * 5, 1)
+
+    def forward(self, inputs: dict, fine_tuning: bool = False) -> torch.FloatTensor:
+        """Model pipeline for AERGCN_lite.
+
+        Args:
+            inputs (dict): {
+                'id' (list of str): Sentence pair ids.
+                'lemma' (list of str): Target lemmas.
+                'pos' (list of str): POS tags of the lemmas.
+                'sentence1' (list of str): First sentences.
+                'sentence2' (list of str): Second sentences.
+                'start1' (list of int): Start indices of the lemmas in the first sentence.
+                'end1' (list of int): End indices of the lemmas in the first sentence.
+                'start2' (list of int): Start indices of the lemmas in the second sentence.
+                'end2' (list of int): End indices of the lemmas in the second sentence.
+                'label' (list of str): Labels of the sentence pairs.
+                'lemma1' (list of str): Exact form of the lemmas in first sentences.
+                'lemma2' (list of str): Exact form of the lemmas in second sentences.
+                'alignment1' (list of list of list of int): Alignment between the tokens in the first sentence and the word-pieces encoded by the BERT models.
+                'start_offset1' (torch.LongTensor): Indices indicating the start token position of the first sentences (excluding special tokens). 1D tensor.
+                'end_offset1' (torch.LongTensor): Indices indicating the end token position of the first sentences (excluding special tokens). 1D tensor.
+                'pos_tags1' (torch.LongTensor): POS tag indices corresponding to the tokens in the first sentences. 2D tensor (batch_size, max_sequence_length of sentences).
+                'alignment2' (list of list of list of int): Alignment between the tokens in the second sentence and the word-pieces encoded by the BERT models.
+                'start_offset2' (torch.LongTensor): Indices indicating the start token position of the second sentences (excluding special tokens). 1D tensor.
+                'end_offset2' (torch.LongTensor): Indices indicating the end token position of the second sentences (excluding special tokens). 1D tensor.
+                'pos_tags2' (torch.LongTensor): POS tag indices corresponding to the tokens in the second sentences. 2D tensor (batch_size, max_sequence_length of sentences).
+                'adjacency_tensors1' (tensor.FLoatTensor): Padded encoded adjacency tensors for the first sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
+                'adjacency_tensors2' (tensor.FLoatTensor): Padded encoded adjacency tensors for the second sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
+                'context_masks' (torch.LongTensor): Indices used to mask padded tokens for the sentence pairs. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'input_ids' (torch.LongTensor): Token indices for the sentence pairs. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'offset_mapping' (torch.LongTensor): Character indices for each token in the sentence pairs. 3D tensor (batch_size, max_sequence_length of concatenated sentence pairs, 2)
+            }
+            fine_tuning (bool, optional): [description]. Defaults to False.
+
+        Returns:
+            torch.FloatTensor: [description]
+        """
+        # tmp_int_time = time.time()
+        # for i_lang, lang in enumerate([self.opt.lang_1, self.opt.lang_2], start=1):
+        concat_tmp = []
+        input_ids = inputs['input_ids'].to(self.opt.device)
+
+        if fine_tuning:
+            self.text_embeddings.train()
+            text = self.text_embeddings(input_ids)[0]
+        else:
+            self.text_embeddings.eval()
+            with torch.no_grad():
+                text = self.text_embeddings(input_ids)[0]
+        context_masks = inputs['context_masks']
+
+        embedding_len = torch.sum(context_masks, dim=-1)
+        if self.opt.embed_dim != self.opt.hidden_dim:
+            text_out = self.lin_sem(text)
+        else:
+            text_out = text
+
+        embedding_len = embedding_len.to(device=self.opt.device, dtype=torch.float)
+        sem_attn_mean = torch.div(torch.sum(text_out, dim=1), embedding_len.view(embedding_len.size(0), 1))
+
+        sentence_pair_offset = inputs['end_offset1'] + 1
+        sentence2_end = sentence_pair_offset + inputs['end_offset2']
+
+        # Split the embeddings of the first and second sentences.
+        embeddings1, embeddings2 = [], []
+        for text_out_row, start_ind2, end_ind2 in zip(text_out, sentence_pair_offset, sentence2_end):
+            embeddings1_row, embeddings2_row = text_out_row[0:start_ind2], text_out_row[start_ind2:end_ind2 + 1]
+            embeddings1.append(embeddings1_row)
+            embeddings2.append(embeddings2_row)
+
+        embeddings1 = pad_sequence(embeddings1, batch_first=True)
+        embeddings2 = pad_sequence(embeddings2, batch_first=True)
+
+        self.embeddings = (embeddings1, embeddings2)
+
+        # Find the lemma embeddings from the splitted sentence embeddings.
+        lemma_embeddings1, lemma_embeddings2 = [], []
+        for batch_i, (embeddings1_row, embeddings2_row, offset_mapping, start1, start2, alignment1, alignment2) \
+                in enumerate(zip(embeddings1, embeddings2, inputs['offset_mapping'], inputs['start1'], inputs['start2'], inputs['alignment1'], inputs['alignment2'])):
+            # Find the indices of the tokens that represent (part of) the lemmas.
+            lemma_ind1, lemma_ind2 = Embedder.get_indices_of_the_words_by_start_char_id(offset_mapping, start1, start2)
+            for inds in alignment1:
+                # Sum up all the token embeddings that constitute the lemma (also check whether there is a skip in the alignment indices which should not happen, i.e. training.en-en.6638 sentence1)
+                if (lemma_ind1 in inds) or (len(inds) != 0 and lemma_ind1 > inds[0] and lemma_ind1 < inds[-1]):
+                    lemma_embeddings1.append(embeddings1_row[inds, :].sum(dim=0))
+                    break
+
+            for inds in alignment2:
+                if (lemma_ind2 in inds) or (len(inds) != 0 and lemma_ind2 > inds[0] and lemma_ind2 < inds[-1]):
+                    lemma_embeddings2.append(embeddings2_row[inds, :].sum(dim=0))
+                    break
+
+        lemma_embeddings1 = torch.stack(lemma_embeddings1, dim=0).to(self.opt.device)
+        lemma_embeddings2 = torch.stack(lemma_embeddings2, dim=0).to(self.opt.device)
+
+        concat_tmp.extend([sem_attn_mean, lemma_embeddings1, lemma_embeddings2])
+
+        for i_lang, model_part in enumerate(zip(
+                self.embeddings,
+                self.pos_tag_embeddings,
+                # self.lin_sem,
+                self.lin_syn,
+                # self.attn_sem,
+                self.rgcns
+        ), start=1):
+            # text_embeddings, pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, rgcns = model_part
+            text_embeddings, pos_tag_embeddings, lin_syn, rgcns = model_part
+            # text_embeddings = self.text_embeddings
+
+            # print('hc: {}s'.format(time.time() - tmp_int_time))
+            # tmp_int_time = time.time()
+
+            if not self.opt.include_pos_tags:
+                # embeddings = text_out
+                embeddings = text_embeddings
+                alignments = inputs[f'alignment{i_lang}']
+
+                aligned_embeddings = list(map(align_embedding, list(embeddings), alignments))
+                syntax_text_len = torch.tensor(list(map(len, aligned_embeddings))).to(self.opt.device)
+                syntax_text_out = pad_sequence(aligned_embeddings, batch_first=True)
+
+            else:
+                syntax_text_len = torch.sum(
+                    inputs[f'pos_tags{i_lang}'] != 0, dim=-1).to(self.opt.device)
+                syntax_text_out = pos_tag_embeddings(inputs[f'pos_tags{i_lang}'].to(self.opt.device))
+                syntax_text_len = torch.sum(
+                    inputs[f'pos_tags{i_lang}'] != 0, dim=-1).to(self.opt.device)
+
+                if self.opt.embed_dim != self.opt.hidden_dim:
+                    syntax_text_out = lin_syn(syntax_text_out)
+
+            # print('Prepare syntactic branch: {}s'.format(time.time() - tmp_int_time))
+            # tmp_int_time = time.time()
+
+            adj = inputs[f'adjacency_tensors{i_lang}'].to(self.opt.device)
+
+            syn_embeddings = rgcns(syntax_text_out, adj)
+
+            # print('hg: {}s'.format(time.time() - tmp_int_time))
+            # tmp_int_time = time.time()
+
+            syn_attn_mean = torch.div(torch.sum(syn_embeddings, dim=1),
+                                      syntax_text_len.view(syntax_text_len.size(0), 1))
+
+            concat_tmp.extend([syn_attn_mean])
 
         concat_embeddings = torch.cat(concat_tmp, dim=-1)
         output = self.dense(self.dropout(concat_embeddings))
@@ -240,11 +476,11 @@ class AERGCN(nn.Module):
 
 
 class AEGCN(nn.Module):
-    """Class for the AERGCN model.
+    """Class for the AEGCN model.
     """
 
     def __init__(self, opt: Any):
-        """Instantiate the AERGCN model with the parsed arguments.
+        """Instantiate the AEGCN model with the parsed arguments.
 
         Args:
             opt (Any): Parsed command-line arguments.
@@ -268,14 +504,7 @@ class AEGCN(nn.Module):
             self.pos_tag_embeddings = (None, None)
 
         if opt.embed_dim != opt.hidden_dim:
-            self.lin_sem1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
-
-            if not opt.multi_lingual:
-                self.lin_sem2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
-            else:
-                self.lin_sem2 = self.lin_sem1
-
-            self.lin_sem = (self.lin_sem1, self.lin_sem2)
+            self.lin_sem = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
 
             if opt.include_pos_tags:
                 self.lin_syn1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
@@ -289,16 +518,8 @@ class AEGCN(nn.Module):
             else:
                 self.lin_syn = (None, None)
 
-        self.attn_sem1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
-                                   score_function=opt.score_function, dropout=opt.dropout)
-
-        if not opt.multi_lingual:
-            self.attn_sem2 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
-                                       score_function=opt.score_function, dropout=opt.dropout)
-        else:
-            self.attn_sem2 = self.attn_sem1
-
-        self.attn_sem = (self.attn_sem1, self.attn_sem2)
+        self.attn_sem = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
+                                  score_function=opt.score_function, dropout=opt.dropout)
 
         self.attn_syn1 = Attention(opt.hidden_dim, out_dim=opt.hidden_dim, n_head=opt.head,
                                    score_function=opt.score_function, dropout=opt.dropout)
@@ -329,11 +550,11 @@ class AEGCN(nn.Module):
         self.gcns = (self.gcns1, self.gcns2)
 
         self.dropout = nn.Dropout(p=self.opt.dropout)
-        self.dense = nn.Linear(opt.hidden_dim * 4, 1)
-        # self.dense = nn.Linear(opt.hidden_dim * 4, 2)
+        self.dense = nn.Linear(opt.hidden_dim * 5, 1)
+        # self.dense = nn.Linear(opt.hidden_dim * 5, 2)
 
     def forward(self, inputs: dict, fine_tuning: bool = False) -> torch.FloatTensor:
-        """Model pipeline for AERGCN.
+        """Model pipeline for AEGCN.
 
         Args:
             inputs (dict): {
@@ -347,8 +568,8 @@ class AEGCN(nn.Module):
                 'start2' (list of int): Start indices of the lemmas in the second sentence.
                 'end2' (list of int): End indices of the lemmas in the second sentence.
                 'label' (list of str): Labels of the sentence pairs.
-                'token1' (list of str): Exact tokens of the lemmas in first sentences.
-                'token2' (list of str): Exact tokens of the lemmas in second sentences.
+                'lemma1' (list of str): Exact tokens of the lemmas in first sentences.
+                'lemma2' (list of str): Exact tokens of the lemmas in second sentences.
                 'alignment1' (list of list of list of int): Alignment between the tokens in the first sentence and the word-pieces encoded by the BERT models.
                 'start_offset1' (torch.LongTensor): Indices indicating the start token position of the first sentences (excluding special tokens). 1D tensor.
                 'end_offset1' (torch.LongTensor): Indices indicating the end token position of the first sentences (excluding special tokens). 1D tensor.
@@ -357,12 +578,11 @@ class AEGCN(nn.Module):
                 'start_offset2' (torch.LongTensor): Indices indicating the start token position of the second sentences (excluding special tokens). 1D tensor.
                 'end_offset2' (torch.LongTensor): Indices indicating the end token position of the second sentences (excluding special tokens). 1D tensor.
                 'pos_tags2' (torch.LongTensor): POS tag indices corresponding to the tokens in the second sentences. 2D tensor (batch_size, max_sequence_length of sentences).
-                'context_masks1' (torch.LongTensor): Indices used to mask padded tokens for the first sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
-                'input_ids1' (torch.LongTensor): Token indices for the first sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
                 'adjacency_tensors1' (tensor.FLoatTensor): Padded encoded adjacency tensors for the first sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
-                'context_masks2' (torch.LongTensor): Indices used to mask padded tokens for the second sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
-                'input_ids2' (torch.LongTensor): Token indices for the second sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
                 'adjacency_tensors2' (tensor.FLoatTensor): Padded encoded adjacency tensors for the second sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
+                'context_masks' (torch.LongTensor): Indices used to mask padded tokens for the sentence pairs. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'input_ids' (torch.LongTensor): Token indices for the sentence pairs. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'offset_mapping' (torch.LongTensor): Character indices for each token in the sentence pairs. 3D tensor (batch_size, max_sequence_length of concatenated sentence pairs, 2)
             }
             fine_tuning (bool, optional): [description]. Defaults to False.
 
@@ -372,43 +592,82 @@ class AEGCN(nn.Module):
         # tmp_int_time = time.time()
         # for i_lang, lang in enumerate([self.opt.lang_1, self.opt.lang_2], start=1):
         concat_tmp = []
+        input_ids = inputs['input_ids'].to(self.opt.device)
+
+        if fine_tuning:
+            self.text_embeddings.train()
+            text = self.text_embeddings(input_ids)[0]
+        else:
+            self.text_embeddings.eval()
+            with torch.no_grad():
+                text = self.text_embeddings(input_ids)[0]
+        context_masks = inputs['context_masks']
+
+        embedding_len = torch.sum(context_masks, dim=-1)
+        if self.opt.embed_dim != self.opt.hidden_dim:
+            text_out = self.lin_sem(text)
+        else:
+            text_out = text
+
+        sem_attn, _ = self.attn_sem(text_out, text_out)
+        embedding_len = embedding_len.to(device=self.opt.device, dtype=torch.float)
+        sem_attn_mean = torch.div(torch.sum(sem_attn, dim=1), embedding_len.view(embedding_len.size(0), 1))
+
+        sentence_pair_offset = inputs['end_offset1'] + 1
+        sentence2_end = sentence_pair_offset + inputs['end_offset2']
+
+        embeddings1, embeddings2 = [], []
+        for text_out_row, start_ind2, end_ind2 in zip(text_out, sentence_pair_offset, sentence2_end):
+            embeddings1_row, embeddings2_row = text_out_row[0:start_ind2], text_out_row[start_ind2:end_ind2 + 1]
+            embeddings1.append(embeddings1_row)
+            embeddings2.append(embeddings2_row)
+
+        embeddings1 = pad_sequence(embeddings1, batch_first=True)
+        embeddings2 = pad_sequence(embeddings2, batch_first=True)
+
+        self.embeddings = (embeddings1, embeddings2)
+
+        # Find the lemma embeddings from the splitted sentence embeddings.
+        lemma_embeddings1, lemma_embeddings2 = [], []
+        for batch_i, (embeddings1_row, embeddings2_row, offset_mapping, start1, start2, alignment1, alignment2) \
+                in enumerate(zip(embeddings1, embeddings2, inputs['offset_mapping'], inputs['start1'], inputs['start2'], inputs['alignment1'], inputs['alignment2'])):
+            # Find the indices of the tokens that represent (part of) the lemmas.
+            lemma_ind1, lemma_ind2 = Embedder.get_indices_of_the_words_by_start_char_id(offset_mapping, start1, start2)
+            for inds in alignment1:
+                # Sum up all the token embeddings that constitute the lemma (also check whether there is a skip in the alignment indices which should not happen, i.e. training.en-en.6638 sentence1)
+                if (lemma_ind1 in inds) or (len(inds) != 0 and lemma_ind1 > inds[0] and lemma_ind1 < inds[-1]):
+                    lemma_embeddings1.append(embeddings1_row[inds, :].sum(dim=0))
+                    break
+
+            for inds in alignment2:
+                if (lemma_ind2 in inds) or (len(inds) != 0 and lemma_ind2 > inds[0] and lemma_ind2 < inds[-1]):
+                    lemma_embeddings2.append(embeddings2_row[inds, :].sum(dim=0))
+                    break
+
+        lemma_embeddings1 = torch.stack(lemma_embeddings1, dim=0).to(self.opt.device)
+        lemma_embeddings2 = torch.stack(lemma_embeddings2, dim=0).to(self.opt.device)
+
+        concat_tmp.extend([sem_attn_mean, lemma_embeddings1, lemma_embeddings2])
+
         for i_lang, model_part in enumerate(zip(
-                # self.text_embeddings,
+                self.embeddings,
                 self.pos_tag_embeddings,
-                self.lin_sem,
+                # self.lin_sem,
                 self.lin_syn,
-                self.attn_sem,
+                # self.attn_sem,
                 self.attn_syn,
                 self.gcns
         ), start=1):
             # text_embeddings, pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, rgcns = model_part
-            pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, gcns = model_part
-            text_embeddings = self.text_embeddings
-
-            input_ids = inputs[f'input_ids{i_lang}'].to(self.opt.device)
-
-            if fine_tuning:
-                text_embeddings.train()
-                text = text_embeddings(input_ids)[0]
-            else:
-                text_embeddings.eval()
-                with torch.no_grad():
-                    text = text_embeddings(input_ids)[0]
-            context_masks = inputs[f'context_masks{i_lang}']
-
-            embedding_len = torch.sum(context_masks, dim=-1)
-            if self.opt.embed_dim != self.opt.hidden_dim:
-                text_out = lin_sem(text)
-            else:
-                text_out = text
-
-            sem_attn, _ = attn_sem(text_out, text_out)
+            text_embeddings, pos_tag_embeddings, lin_syn, attn_syn, gcns = model_part
+            # text_embeddings = self.text_embeddings
 
             # print('hc: {}s'.format(time.time() - tmp_int_time))
             # tmp_int_time = time.time()
 
             if not self.opt.include_pos_tags:
-                embeddings = text_out
+                # embeddings = text_out
+                embeddings = text_embeddings
                 alignments = inputs[f'alignment{i_lang}']
 
                 aligned_embeddings = list(map(align_embedding, list(embeddings), alignments))
@@ -439,12 +698,9 @@ class AEGCN(nn.Module):
             # print('hg: {}s'.format(time.time() - tmp_int_time))
             # tmp_int_time = time.time()
 
-            embedding_len = embedding_len.to(device=self.opt.device, dtype=torch.float)
-
-            sem_attn_mean = torch.div(torch.sum(sem_attn, dim=1), embedding_len.view(embedding_len.size(0), 1))
             syn_attn_mean = torch.div(torch.sum(syn_attn, dim=1), syntax_text_len.view(syntax_text_len.size(0), 1))
 
-            concat_tmp.extend([sem_attn_mean, syn_attn_mean])
+            concat_tmp.extend([syn_attn_mean])
 
         concat_embeddings = torch.cat(concat_tmp, dim=-1)
         output = self.dense(self.dropout(concat_embeddings))
@@ -456,11 +712,11 @@ class AEGCN(nn.Module):
 
 
 class AEGCN_lite(nn.Module):
-    """Class for the AERGCN model.
+    """Class for the AEGCN_lite model.
     """
 
     def __init__(self, opt: Any):
-        """Instantiate the AERGCN model with the parsed arguments.
+        """Instantiate the AEGCN_lite model with the parsed arguments.
 
         Args:
             opt (Any): Parsed command-line arguments.
@@ -484,14 +740,7 @@ class AEGCN_lite(nn.Module):
             self.pos_tag_embeddings = (None, None)
 
         if opt.embed_dim != opt.hidden_dim:
-            self.lin_sem1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
-
-            if not opt.multi_lingual:
-                self.lin_sem2 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
-            else:
-                self.lin_sem2 = self.lin_sem1
-
-            self.lin_sem = (self.lin_sem1, self.lin_sem2)
+            self.lin_sem = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
 
             if opt.include_pos_tags:
                 self.lin_syn1 = nn.Linear(opt.embed_dim, opt.hidden_dim, bias=True)
@@ -523,11 +772,11 @@ class AEGCN_lite(nn.Module):
         self.gcns = (self.gcns1, self.gcns2)
 
         self.dropout = nn.Dropout(p=self.opt.dropout)
-        self.dense = nn.Linear(opt.hidden_dim * 4, 1)
-        # self.dense = nn.Linear(opt.hidden_dim * 4, 2)
+        self.dense = nn.Linear(opt.hidden_dim * 5, 1)
+        # self.dense = nn.Linear(opt.hidden_dim * 5, 2)
 
     def forward(self, inputs: dict, fine_tuning: bool = False) -> torch.FloatTensor:
-        """Model pipeline for AERGCN.
+        """Model pipeline for AEGCN_lite.
 
         Args:
             inputs (dict): {
@@ -541,8 +790,8 @@ class AEGCN_lite(nn.Module):
                 'start2' (list of int): Start indices of the lemmas in the second sentence.
                 'end2' (list of int): End indices of the lemmas in the second sentence.
                 'label' (list of str): Labels of the sentence pairs.
-                'token1' (list of str): Exact tokens of the lemmas in first sentences.
-                'token2' (list of str): Exact tokens of the lemmas in second sentences.
+                'lemma1' (list of str): Exact tokens of the lemmas in first sentences.
+                'lemma2' (list of str): Exact tokens of the lemmas in second sentences.
                 'alignment1' (list of list of list of int): Alignment between the tokens in the first sentence and the word-pieces encoded by the BERT models.
                 'start_offset1' (torch.LongTensor): Indices indicating the start token position of the first sentences (excluding special tokens). 1D tensor.
                 'end_offset1' (torch.LongTensor): Indices indicating the end token position of the first sentences (excluding special tokens). 1D tensor.
@@ -551,12 +800,11 @@ class AEGCN_lite(nn.Module):
                 'start_offset2' (torch.LongTensor): Indices indicating the start token position of the second sentences (excluding special tokens). 1D tensor.
                 'end_offset2' (torch.LongTensor): Indices indicating the end token position of the second sentences (excluding special tokens). 1D tensor.
                 'pos_tags2' (torch.LongTensor): POS tag indices corresponding to the tokens in the second sentences. 2D tensor (batch_size, max_sequence_length of sentences).
-                'context_masks1' (torch.LongTensor): Indices used to mask padded tokens for the first sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
-                'input_ids1' (torch.LongTensor): Token indices for the first sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
                 'adjacency_tensors1' (tensor.FLoatTensor): Padded encoded adjacency tensors for the first sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
-                'context_masks2' (torch.LongTensor): Indices used to mask padded tokens for the second sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
-                'input_ids2' (torch.LongTensor): Token indices for the second sentences. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
                 'adjacency_tensors2' (tensor.FLoatTensor): Padded encoded adjacency tensors for the second sentences. 4D tensor (batch_size, num_syntactic_relations, max_sequence_length of sentences, max_sequence_length of sentences).
+                'context_masks' (torch.LongTensor): Indices used to mask padded tokens for the sentence pairs. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'input_ids' (torch.LongTensor): Token indices for the sentence pairs. 2D tensor (batch_size, max_sequence_length of concatenated sentence pairs).
+                'offset_mapping' (torch.LongTensor): Character indices for each token in the sentence pairs. 3D tensor (batch_size, max_sequence_length of concatenated sentence pairs, 2)
             }
             fine_tuning (bool, optional): [description]. Defaults to False.
 
@@ -566,39 +814,80 @@ class AEGCN_lite(nn.Module):
         # tmp_int_time = time.time()
         # for i_lang, lang in enumerate([self.opt.lang_1, self.opt.lang_2], start=1):
         concat_tmp = []
+        input_ids = inputs['input_ids'].to(self.opt.device)
+
+        if fine_tuning:
+            self.text_embeddings.train()
+            text = self.text_embeddings(input_ids)[0]
+        else:
+            self.text_embeddings.eval()
+            with torch.no_grad():
+                text = self.text_embeddings(input_ids)[0]
+        context_masks = inputs['context_masks']
+
+        embedding_len = torch.sum(context_masks, dim=-1)
+        if self.opt.embed_dim != self.opt.hidden_dim:
+            text_out = self.lin_sem(text)
+        else:
+            text_out = text
+
+        embedding_len = embedding_len.to(device=self.opt.device, dtype=torch.float)
+        sem_attn_mean = torch.div(torch.sum(text_out, dim=1), embedding_len.view(embedding_len.size(0), 1))
+
+        sentence_pair_offset = inputs['end_offset1'] + 1
+        sentence2_end = sentence_pair_offset + inputs['end_offset2']
+
+        embeddings1, embeddings2 = [], []
+        for text_out_row, start_ind2, end_ind2 in zip(text_out, sentence_pair_offset, sentence2_end):
+            embeddings1_row, embeddings2_row = text_out_row[0:start_ind2], text_out_row[start_ind2:end_ind2 + 1]
+            embeddings1.append(embeddings1_row)
+            embeddings2.append(embeddings2_row)
+
+        embeddings1 = pad_sequence(embeddings1, batch_first=True)
+        embeddings2 = pad_sequence(embeddings2, batch_first=True)
+
+        self.embeddings = (embeddings1, embeddings2)
+
+        # Find the lemma embeddings from the splitted sentence embeddings.
+        lemma_embeddings1, lemma_embeddings2 = [], []
+        for batch_i, (embeddings1_row, embeddings2_row, offset_mapping, start1, start2, alignment1, alignment2) \
+                in enumerate(zip(embeddings1, embeddings2, inputs['offset_mapping'], inputs['start1'], inputs['start2'], inputs['alignment1'], inputs['alignment2'])):
+            # Find the indices of the tokens that represent (part of) the lemmas.
+            lemma_ind1, lemma_ind2 = Embedder.get_indices_of_the_words_by_start_char_id(offset_mapping, start1, start2)
+            for inds in alignment1:
+                # Sum up all the token embeddings that constitute the lemma (also check whether there is a skip in the alignment indices which should not happen, i.e. training.en-en.6638 sentence1)
+                if (lemma_ind1 in inds) or (len(inds) != 0 and lemma_ind1 > inds[0] and lemma_ind1 < inds[-1]):
+                    lemma_embeddings1.append(embeddings1_row[inds, :].sum(dim=0))
+                    break
+
+            for inds in alignment2:
+                if (lemma_ind2 in inds) or (len(inds) != 0 and lemma_ind2 > inds[0] and lemma_ind2 < inds[-1]):
+                    lemma_embeddings2.append(embeddings2_row[inds, :].sum(dim=0))
+                    break
+
+        lemma_embeddings1 = torch.stack(lemma_embeddings1, dim=0).to(self.opt.device)
+        lemma_embeddings2 = torch.stack(lemma_embeddings2, dim=0).to(self.opt.device)
+
+        concat_tmp.extend([sem_attn_mean, lemma_embeddings1, lemma_embeddings2])
+
         for i_lang, model_part in enumerate(zip(
-                # self.text_embeddings,
+                self.embeddings,
                 self.pos_tag_embeddings,
-                self.lin_sem,
+                # self.lin_sem,
                 self.lin_syn,
+                # self.attn_sem,
                 self.gcns
         ), start=1):
             # text_embeddings, pos_tag_embeddings, lin_sem, lin_syn, attn_sem, attn_syn, rgcns = model_part
-            pos_tag_embeddings, lin_sem, lin_syn, gcns = model_part
-            text_embeddings = self.text_embeddings
-
-            input_ids = inputs[f'input_ids{i_lang}'].to(self.opt.device)
-
-            if fine_tuning:
-                text_embeddings.train()
-                text = text_embeddings(input_ids)[0]
-            else:
-                text_embeddings.eval()
-                with torch.no_grad():
-                    text = text_embeddings(input_ids)[0]
-            context_masks = inputs[f'context_masks{i_lang}']
-
-            embedding_len = torch.sum(context_masks, dim=-1)
-            if self.opt.embed_dim != self.opt.hidden_dim:
-                text_out = lin_sem(text)
-            else:
-                text_out = text
+            text_embeddings, pos_tag_embeddings, lin_syn, gcns = model_part
+            # text_embeddings = self.text_embeddings
 
             # print('hc: {}s'.format(time.time() - tmp_int_time))
             # tmp_int_time = time.time()
 
             if not self.opt.include_pos_tags:
-                embeddings = text_out
+                # embeddings = text_out
+                embeddings = text_embeddings
                 alignments = inputs[f'alignment{i_lang}']
 
                 aligned_embeddings = list(map(align_embedding, list(embeddings), alignments))
@@ -627,13 +916,10 @@ class AEGCN_lite(nn.Module):
             # print('hg: {}s'.format(time.time() - tmp_int_time))
             # tmp_int_time = time.time()
 
-            embedding_len = embedding_len.to(device=self.opt.device, dtype=torch.float)
-
-            sem_attn_mean = torch.div(torch.sum(text_out, dim=1), embedding_len.view(embedding_len.size(0), 1))
             syn_attn_mean = torch.div(torch.sum(syn_embeddings, dim=1),
                                       syntax_text_len.view(syntax_text_len.size(0), 1))
 
-            concat_tmp.extend([sem_attn_mean, syn_attn_mean])
+            concat_tmp.extend([syn_attn_mean])
 
         concat_embeddings = torch.cat(concat_tmp, dim=-1)
         output = self.dense(self.dropout(concat_embeddings))
